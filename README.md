@@ -2,6 +2,8 @@
 
 A Django cache backend adapter and utilities for the fragmented_keys library, providing automatic cache invalidation through versioned tag-instance pairs.
 
+> **New to fragmented caching?** Read [What Are Fragmented Caches?](docs/fragmented-cache-concepts.md) for the concepts behind this library.
+
 ## Features
 
 - **Automatic cache invalidation**: Tags auto-increment on model changes via Django signals
@@ -13,17 +15,16 @@ A Django cache backend adapter and utilities for the fragmented_keys library, pr
 
 ## Installation
 
-The package is included in the project as a local package. Add it to requirements.txt:
-
-```txt
-fragmented-keys==1.1
--e ./fragmented_keys_django
+```bash
+pip install fragmented-keys
+pip install -e ./fragmented_keys_django
 ```
 
-Then install:
+Or add to `requirements.txt`:
 
-```bash
-pip install -e ./fragmented_keys_django
+```txt
+fragmented-keys>=0.1.3
+-e ./fragmented_keys_django
 ```
 
 ## Quick Start
@@ -59,6 +60,13 @@ ModelTagManager.register_model(User)
 ModelTagManager.register_model(MyModel, tag_name='CustomName')
 ```
 
+Registration hooks into Django's `post_save` and `post_delete` signals.
+When an instance is saved or deleted, only the tag for **that specific
+instance** is incremented — e.g. saving `User(pk=42)` increments the tag
+`User:42`. Cache entries tagged with `User:42` will miss on next read;
+cache entries tagged with `User:7` or any other pk are unaffected.
+No model-wide or global invalidation occurs.
+
 ### 3. Use the @tagged_cache Decorator
 
 ```python
@@ -75,7 +83,28 @@ def get_dashboard_statistics(user_id: int, filter_type: str):
     return data
 ```
 
+Each tag in the `tags` list is embedded into the cache key by its current
+version number. When a tag version is incremented the composed cache key
+changes, causing an automatic cache miss — no explicit delete is needed.
+
+Tags come in two scopes:
+
+- **Instance-scoped** (`'User:{user_id}'`) — The `{user_id}` placeholder
+  is resolved from the function arguments. Saving `User(pk=42)` only
+  invalidates cache entries where `user_id=42` was passed.
+- **Global** (`'Dashboard'`) — No placeholder, so the tag is shared across
+  all calls. Incrementing the `Dashboard` tag (manually via
+  `StandardTag('Dashboard').increment()`) invalidates every cached result
+  of this function regardless of arguments.
+
+`vary_on` controls **which argument combinations get their own cache
+entry**. Two calls with different `filter_type` values produce separate
+cache keys and can be invalidated independently by their instance-scoped
+tags.
+
 ## Usage Examples
+
+> New to fragmented caching? Read [What Are Fragmented Caches?](docs/fragmented-cache-concepts.md) first for the full mental model.
 
 ### Decorator Pattern (Recommended)
 
@@ -91,11 +120,27 @@ def get_user_profile(user_id: int):
     return User.objects.get(pk=user_id).profile
 ```
 
-When the user with `user_id=42` is saved, the auto-increment makes all
-cache entries tagged with `User:42` or `Profile:42` resolve to new keys,
-effectively invalidating the cache.
+**What happens under the hood:**
+
+1. On first call with `user_id=42`, the decorator looks up the current
+   versions of tags `User:42` and `Profile:42` (say, v5 and v2).
+2. It composes a cache key like `get_user_profile_user_id_42_User_42_v5_Profile_42_v2`.
+3. Cache miss — the function runs, and the result is stored under that key.
+4. Next call with `user_id=42` finds the same key — cache hit, function skipped.
+
+**When invalidation happens:** Saving `User(pk=42)` increments `User:42` to
+v6. The next call composes `...User_42_v6...` — a different key string, so it's
+a cache miss. The function reruns and caches under the new key. The old v5
+entry is never deleted; it expires via TTL.
+
+**Scope:** Only caches where `user_id=42` was passed are affected. Calls with
+`user_id=7` still hit their cached entries because `User:7`'s version hasn't
+changed.
 
 ### Manual Tag Management
+
+Use this when you need direct control over key composition — in services,
+management commands, or anywhere a decorator doesn't fit.
 
 ```python
 from fragmented_keys_django import model_tag, list_tag
@@ -116,6 +161,14 @@ if result is None:
     cache.set(cache_key, result, timeout=3600)
 ```
 
+**What happens:** The cache key embeds both `User:{user_id}` and
+`Campaign:{campaign_id}` tag versions. The cached value is invalidated when
+**either** the user or the campaign is saved — whichever changes first causes
+the composed key to differ on the next read.
+
+This is the same mechanism the `@tagged_cache` decorator uses internally, just
+without the decorator sugar.
+
 ### Model Auto-Invalidation
 
 ```python
@@ -130,6 +183,20 @@ user = User.objects.get(pk=42)
 user.save()  # Increments User:42 tag -> cache invalidated
 ```
 
+**What "register" actually does:** It connects Django's `post_save` and
+`post_delete` signals for that model. When an instance is saved or deleted,
+the signal handler calls `StandardTag(tag_name, str(instance.pk)).increment()`
+— bumping the version counter for that specific record's tag.
+
+**Scope is per-instance, not per-model.** `user.save()` on `pk=42` increments
+`User:42` only. All other users' cached data is untouched. There is no
+model-wide "bust all User caches" side effect.
+
+**`tag_name` controls the tag prefix.** `register_model(Donation, tag_name='Donations')`
+means signals will increment `Donations:{pk}` rather than `Donation:{pk}`.
+Your `@tagged_cache` tags must use the same name to link up:
+`tags=['Donations:{donation_id}']`.
+
 ### Manual Invalidation
 
 ```python
@@ -139,26 +206,58 @@ from fragmented_keys_django import ModelTagManager
 ModelTagManager.invalidate_model_tag(User, 42)
 ```
 
+**When to use this:** For changes that happen outside Django's ORM — bulk SQL
+updates, external webhooks, management commands, or Celery tasks that modify
+data without calling `model.save()`. Since no `post_save` signal fires in
+these cases, you must manually increment the tag.
+
+This does the same thing the signal handler does: increments the version of
+`User:42` so that any cache key embedding that tag produces a miss on next
+read.
+
 ## Tag Factory Functions
 
+The tag factories are semantic aliases — they all create a `StandardTag` under
+the hood. The different names make your code's intent clearer:
+
 ### model_tag
+
+For caches tied to a **single model instance**. Invalidated when that specific
+record changes.
+
 ```python
 from fragmented_keys_django import model_tag
 
+# "Invalidate this cache when User 42 changes"
 user_tag = model_tag('User', str(user_id))
 ```
 
 ### list_tag
+
+For caches of **queries or collections** scoped to an owner. Semantically
+signals "this cache holds a list of things belonging to X."
+
 ```python
 from fragmented_keys_django import list_tag
 
+# "Invalidate this cache when User 42's donation list changes"
 donations_tag = list_tag('Donations', str(user_id))
 ```
 
+**Note:** You must arrange for the tag to be incremented when the list
+changes — either by registering the parent model or by calling
+`StandardTag('Donations', str(user_id)).increment()` manually when a
+donation is added/removed.
+
 ### aggregate_tag
+
+For **computed statistics or rollups** where the cache depends on a combination
+of filters.
+
 ```python
 from fragmented_keys_django import aggregate_tag
 
+# "Invalidate this cache when daily stats for User 42 change"
 stats_tag = aggregate_tag('DashboardStats', f'daily_{user_id}')
 ```
 

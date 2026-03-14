@@ -16,3 +16,6 @@ __pycache__/
 
 # Temp
 .tmp/
+
+# Sphinx docs build
+docs/_build/

@@ -60,17 +60,16 @@ user.save()  # Cache for user 42 automatically invalidated
 
 ### Step 1.1: Install Dependencies
 
-Add to `requirements.txt`:
-
-```txt
-fragmented-keys==1.1
--e ./fragmented_keys_django
+```bash
+pip install fragmented-keys
+pip install -e ./fragmented_keys_django
 ```
 
-Install:
+Or add to `requirements.txt`:
 
-```bash
-pip install -e ./fragmented_keys_django
+```txt
+fragmented-keys>=0.1.3
+-e ./fragmented_keys_django
 ```
 
 ### Step 1.2: Configure Django Settings
