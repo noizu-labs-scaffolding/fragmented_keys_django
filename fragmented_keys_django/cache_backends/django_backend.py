@@ -21,17 +21,38 @@ current tag versions, enabling automatic invalidation when tags are incremented.
 3. The value is stored/retrieved under this composite key.  When a tag version
    changes, the composite key resolves to a different string → cache miss.
 
-**Configuration in settings.py:**
+**Configuration in settings.py — two modes:**
+
+*Delegation mode* — wraps an existing Django cache alias:
+
+.. code-block:: python
+
+   CACHES = {
+       "default": {
+           "BACKEND": "django_redis.cache.RedisCache",
+           "LOCATION": "redis://127.0.0.1:6379/1",
+       },
+       "fragmented": {
+           "BACKEND": "fragmented_keys_django.cache_backends.django_backend.FragmentedKeysCacheBackend",
+           "CACHE_NAME": "default",   # underlying cache alias
+           "PREFIX": "NOZ_FRAG",      # global tag prefix
+       },
+   }
+
+*Standalone mode* — owns its own connection (no separate cache alias needed):
 
 .. code-block:: python
 
    CACHES = {
        "fragmented": {
            "BACKEND": "fragmented_keys_django.cache_backends.django_backend.FragmentedKeysCacheBackend",
-           "CACHE_NAME": "default",   # underlying cache alias
-           "PREFIX": "NOZ_FRAG",      # global tag prefix
-       }
+           "LOCATION": "redis://127.0.0.1:6379/1",
+           "PREFIX": "NOZ_FRAG",
+           # "BACKEND_CLASS": "django_redis.cache.RedisCache",  # default
+       },
    }
+
+Specifying both ``CACHE_NAME`` and ``LOCATION`` raises ``ValueError``.
 """
 
 from __future__ import annotations
@@ -42,6 +63,7 @@ if TYPE_CHECKING:
     from typing import Any
 
 from django.core.cache.backends.base import BaseCache
+from django.utils.module_loading import import_string
 from fragmented_keys import FragmentedKeyRing, StandardKey, StandardTag
 
 
@@ -56,11 +78,23 @@ class FragmentedKeysCacheBackend(BaseCache):
     :param params: Django cache backend parameters dict from ``settings.CACHES``.
         Recognized keys:
 
+        **Delegation mode** (wrap an existing Django cache alias):
+
         - ``CACHE_NAME`` (str): Django cache alias to wrap.  Default: ``"default"``.
-        - ``PREFIX`` (str): Global prefix for tag version keys stored in Redis.
-          Prevents collisions between apps sharing the same Redis instance.
+
+        **Standalone mode** (own connection, no separate alias needed):
+
+        - ``LOCATION`` (str): Redis/cache connection URL (e.g.
+          ``"redis://127.0.0.1:6379/1"``).
+        - ``BACKEND_CLASS`` (str): Dotted path to the real cache backend class.
+          Default: ``"django_redis.cache.RedisCache"``.
+
+        **Common to both modes:**
+
+        - ``PREFIX`` (str): Global prefix for tag version keys stored in the cache.
+          Prevents collisions between apps sharing the same instance.
           Default: ``"NOZ"``.
-        - ``OPTIONS`` (dict): Passed through but not currently used by this backend.
+        - ``OPTIONS`` (dict): Passed through to the underlying backend.
 
     **Usage:**
 
@@ -83,15 +117,37 @@ class FragmentedKeysCacheBackend(BaseCache):
 
     def __init__(self, params: dict[str, Any]) -> None:
         super().__init__(params)
-        self._cache_name = params.get("CACHE_NAME", "default")
         self._prefix = params.get("PREFIX", "NOZ")
         self._options = params.get("OPTIONS", {})
+
+        cache_name = params.get("CACHE_NAME")
+        location = params.get("LOCATION")
+
+        if cache_name and location:
+            raise ValueError(
+                "FragmentedKeysCacheBackend: specify either CACHE_NAME (delegation "
+                "mode) or LOCATION (standalone mode), not both."
+            )
 
         from fragmented_keys import Configuration
         from fragmented_keys_django.cache_backends.handlers import DjangoCacheHandler
 
-        # Configure fragmented_keys with Django cache handler
-        self._handler = DjangoCacheHandler(self._cache_name)
+        if location:
+            # Standalone mode — instantiate the underlying backend directly
+            self._cache_name = params.get("CACHE_NAME", "standalone")
+            backend_class = params.get(
+                "BACKEND_CLASS", "django_redis.cache.RedisCache"
+            )
+            cls = import_string(backend_class)
+            underlying = cls(location, params)
+            self._handler = DjangoCacheHandler(
+                cache_name=self._cache_name, cache=underlying
+            )
+        else:
+            # Delegation mode — wrap an existing Django cache alias
+            self._cache_name = cache_name or "default"
+            self._handler = DjangoCacheHandler(self._cache_name)
+
         Configuration.set_default_cache_handler(self._handler)
         Configuration.set_global_prefix(self._prefix)
 

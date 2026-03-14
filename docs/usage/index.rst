@@ -22,3 +22,4 @@ invalidates caches in both modes simultaneously.
    backend
    tags
    testing
+   telemetry

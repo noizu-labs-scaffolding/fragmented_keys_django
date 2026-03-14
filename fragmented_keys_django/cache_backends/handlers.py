@@ -44,8 +44,19 @@ class DjangoCacheHandler:
     ``bool`` values (especially when the underlying backend uses pickling).
     All are converted to ``str`` for the ``fragmented_keys`` protocol.
 
+    Supports two construction modes:
+
+    - **By name** (delegation): ``DjangoCacheHandler("default")`` — looks up
+      an existing Django cache alias from ``settings.CACHES``.
+    - **By instance** (standalone): ``DjangoCacheHandler(cache=my_backend)`` —
+      wraps a cache backend instance directly, no Django alias required.
+
     :param cache_name: Name of the Django cache alias to wrap.  Must match
-        a key in ``settings.CACHES``.  Default: ``"default"``.
+        a key in ``settings.CACHES``.  Ignored if *cache* is provided.
+        Default: ``"default"``.
+    :param cache: A Django cache backend instance to wrap directly.  When
+        provided, *cache_name* is used only for labelling (e.g. in
+        :meth:`group_name`), not for lookup.
 
     :example:
 
@@ -54,15 +65,27 @@ class DjangoCacheHandler:
        from fragmented_keys_django.cache_backends.handlers import DjangoCacheHandler
        from fragmented_keys import StandardTag
 
+       # Delegation mode — looks up "default" in settings.CACHES
        handler = DjangoCacheHandler("default")
+
+       # Standalone mode — wraps an existing backend instance
+       handler = DjangoCacheHandler(cache=my_redis_backend, cache_name="standalone")
+
        tag = StandardTag("User", "42", handler=handler)
-       version = tag.get_tag_version()  # reads from Django's "default" cache
+       version = tag.get_tag_version()
     """
 
-    def __init__(self, cache_name: str = "default") -> None:
-        from django.core.cache import caches
+    def __init__(
+        self,
+        cache_name: str = "default",
+        cache: BaseCache | None = None,
+    ) -> None:
+        if cache is not None:
+            self._cache = cache
+        else:
+            from django.core.cache import caches
 
-        self._cache = caches[cache_name]
+            self._cache = caches[cache_name]
         self._cache_name = cache_name
 
     def group_name(self) -> str:

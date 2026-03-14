@@ -1,11 +1,13 @@
-"""Tests for @tagged_cache decorator."""
+"""Tests for @tagged_cache and @cached_async decorators."""
 
+import asyncio
 from unittest.mock import MagicMock, patch, call
 from functools import wraps
 
 import pytest
 
 from fragmented_keys_django.cache_utils.decorators import (
+    cached_async,
     tagged_cache,
     resolve_param_value,
     parse_tag_template,
@@ -281,3 +283,98 @@ class TestResolveTagInstance:
 
         result = resolve_tag_instance(tag_template, (42,), {}, test_func)
         assert result == ""
+
+
+class TestCachedAsyncDecorator:
+    """Tests for the @cached_async decorator."""
+
+    @patch("django.core.cache.caches")
+    def test_async_cache_miss(self, mock_caches):
+        """Test async decorator on cache miss."""
+        mock_cache = MagicMock()
+        mock_cache.get.return_value = None
+        mock_caches.__getitem__.return_value = mock_cache
+
+        call_count = 0
+
+        @cached_async(
+            timeout=3600,
+            tags=["User:{user_id}"],
+            vary_on=["user_id"],
+        )
+        async def get_user_data(user_id: int):
+            nonlocal call_count
+            call_count += 1
+            return {"id": user_id, "data": "async_result"}
+
+        result = asyncio.get_event_loop().run_until_complete(get_user_data(42))
+        assert result == {"id": 42, "data": "async_result"}
+        assert call_count == 1
+        assert mock_cache.set.called
+
+    @patch("django.core.cache.caches")
+    def test_async_cache_hit(self, mock_caches):
+        """Test async decorator on cache hit."""
+        mock_cache = MagicMock()
+        mock_cache.get.return_value = {"id": 42, "data": "cached"}
+        mock_caches.__getitem__.return_value = mock_cache
+
+        call_count = 0
+
+        @cached_async(
+            timeout=3600,
+            tags=["User:{user_id}"],
+            vary_on=["user_id"],
+        )
+        async def get_user_data(user_id: int):
+            nonlocal call_count
+            call_count += 1
+            return {"id": user_id}
+
+        result = asyncio.get_event_loop().run_until_complete(get_user_data(42))
+        assert result == {"id": 42, "data": "cached"}
+        assert call_count == 0
+        assert not mock_cache.set.called
+
+    @patch("django.core.cache.caches")
+    def test_async_with_version(self, mock_caches):
+        """Test async decorator with version parameter."""
+        mock_cache = MagicMock()
+        mock_cache.get.return_value = None
+        mock_caches.__getitem__.return_value = mock_cache
+
+        @cached_async(version="v2", tags=["Test"])
+        async def my_function():
+            return "versioned"
+
+        result = asyncio.get_event_loop().run_until_complete(my_function())
+        assert result == "versioned"
+        assert mock_cache.get.called
+
+    @patch("django.core.cache.caches")
+    def test_async_with_custom_key_name(self, mock_caches):
+        """Test async decorator with custom key_name."""
+        mock_cache = MagicMock()
+        mock_cache.get.return_value = None
+        mock_caches.__getitem__.return_value = mock_cache
+
+        @cached_async(key_name="CustomAsync", tags=["Test"])
+        async def my_function():
+            return "custom"
+
+        result = asyncio.get_event_loop().run_until_complete(my_function())
+        assert result == "custom"
+
+    @patch("django.core.cache.caches")
+    def test_async_no_tags_no_vary(self, mock_caches):
+        """Test async decorator with no tags and no vary_on."""
+        mock_cache = MagicMock()
+        mock_cache.get.return_value = None
+        mock_caches.__getitem__.return_value = mock_cache
+
+        @cached_async(timeout=60)
+        async def simple():
+            return "simple_result"
+
+        result = asyncio.get_event_loop().run_until_complete(simple())
+        assert result == "simple_result"

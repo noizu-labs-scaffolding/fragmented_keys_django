@@ -100,6 +100,105 @@ class TestDjangoCacheHandler:
 
         assert result == {}
 
+    def test_get_int_value(self, mock_django_cache):
+        """Test get converts int values to string."""
+        mock_django_cache.get.return_value = 42
+        handler = DjangoCacheHandler("test_cache")
+
+        result = handler.get("test_key")
+        assert result == "42"
+        assert isinstance(result, str)
+
+    def test_get_float_value(self, mock_django_cache):
+        """Test get converts float values to string."""
+        mock_django_cache.get.return_value = 3.14
+        handler = DjangoCacheHandler("test_cache")
+
+        result = handler.get("test_key")
+        assert result == "3.14"
+        assert isinstance(result, str)
+
+    def test_get_bool_value(self, mock_django_cache):
+        """Test get converts bool values to string."""
+        mock_django_cache.get.return_value = True
+        handler = DjangoCacheHandler("test_cache")
+
+        result = handler.get("test_key")
+        assert result == "True"
+        assert isinstance(result, str)
+
+    def test_get_complex_object_fallback(self, mock_django_cache):
+        """Test get falls back to str() for complex objects."""
+        obj = object()
+        mock_django_cache.get.return_value = obj
+        handler = DjangoCacheHandler("test_cache")
+
+        result = handler.get("test_key")
+        assert result == str(obj)
+
+    def test_get_complex_object_str_fails(self, mock_django_cache):
+        """Test get returns None when str() raises on complex object."""
+        class Unstringable:
+            def __str__(self):
+                raise RuntimeError("cannot stringify")
+
+        mock_django_cache.get.return_value = Unstringable()
+        handler = DjangoCacheHandler("test_cache")
+
+        result = handler.get("test_key")
+        assert result is None
+
+    def test_get_list_value(self, mock_django_cache):
+        """Test get converts list values to JSON string."""
+        mock_django_cache.get.return_value = [1, 2, 3]
+        handler = DjangoCacheHandler("test_cache")
+
+        result = handler.get("test_key")
+        assert result == "[1, 2, 3]"
+        assert isinstance(result, str)
+
+    def test_get_multi_with_none_value(self, mock_django_cache):
+        """Test get_multi skips None values."""
+        mock_django_cache.get_many.return_value = {
+            "key1": "value1",
+            "key2": None,
+        }
+        handler = DjangoCacheHandler("test_cache")
+
+        result = handler.get_multi(["key1", "key2"])
+        assert result == {"key1": "value1"}
+
+    def test_get_multi_with_bytes_value(self, mock_django_cache):
+        """Test get_multi converts bytes values."""
+        mock_django_cache.get_many.return_value = {
+            "key1": b"bytes_value",
+        }
+        handler = DjangoCacheHandler("test_cache")
+
+        result = handler.get_multi(["key1"])
+        assert result == {"key1": "bytes_value"}
+
+    def test_get_multi_with_int_value(self, mock_django_cache):
+        """Test get_multi converts int values via str()."""
+        mock_django_cache.get_many.return_value = {
+            "key1": 99,
+        }
+        handler = DjangoCacheHandler("test_cache")
+
+        result = handler.get_multi(["key1"])
+        assert result == {"key1": "99"}
+
+    def test_init_with_cache_instance(self, mock_django_cache):
+        """Test constructing handler with a cache instance directly."""
+        handler = DjangoCacheHandler(cache_name="standalone", cache=mock_django_cache)
+
+        assert handler._cache is mock_django_cache
+        assert handler._cache_name == "standalone"
+
+        # Should work for get/set
+        mock_django_cache.get.return_value = "direct_value"
+        assert handler.get("key") == "direct_value"
+
 
 # Pytest fixtures
 @pytest.fixture

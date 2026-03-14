@@ -156,6 +156,60 @@ class TestModelTagManager:
 
         mock_standard_tag.assert_not_called()
 
+    @patch("fragmented_keys_django.cache_utils.model_helpers.StandardTag")
+    def test_on_model_change_exception_is_silenced(
+        self, mock_standard_tag, mock_model_class, mock_model_instance
+    ):
+        """Signal handler silently catches exceptions (e.g. Redis down)."""
+        ModelTagManager.register_model(mock_model_class)
+        mock_tag = MagicMock()
+        mock_tag.increment.side_effect = ConnectionError("Redis down")
+        mock_standard_tag.return_value = mock_tag
+
+        # Should NOT raise
+        ModelTagManager._on_model_change(
+            sender=mock_model_class,
+            instance=mock_model_instance,
+        )
+
+    @patch("fragmented_keys_django.cache_utils.model_helpers.StandardTag")
+    def test_invalidate_model_tag_exception_returns_false(
+        self, mock_standard_tag, mock_model_class
+    ):
+        """invalidate_model_tag returns False when increment raises."""
+        ModelTagManager.register_model(mock_model_class)
+        mock_tag = MagicMock()
+        mock_tag.increment.side_effect = ConnectionError("Redis down")
+        mock_standard_tag.return_value = mock_tag
+
+        result = ModelTagManager.invalidate_model_tag(mock_model_class, 42)
+        assert result is False
+
+    @patch("django.apps.apps.get_model")
+    def test_get_tag_name_for_model_via_app_label(
+        self, mock_get_model, mock_model_class
+    ):
+        """get_tag_name_for_model falls back to apps.get_model lookup."""
+        ModelTagManager.register_model(mock_model_class)
+
+        # Use a different class object that's not directly in the registry
+        other_ref = MagicMock()
+        mock_get_model.return_value = mock_model_class  # maps back to registered class
+
+        result = ModelTagManager.get_tag_name_for_model(other_ref)
+        assert result == "MockModel"
+
+    @patch("django.apps.apps.get_model")
+    def test_get_tag_name_for_model_app_lookup_fails(
+        self, mock_get_model
+    ):
+        """get_tag_name_for_model returns None when apps.get_model raises."""
+        mock_get_model.side_effect = LookupError("No such model")
+
+        unknown = MagicMock()
+        result = ModelTagManager.get_tag_name_for_model(unknown)
+        assert result is None
+
 
 # Pytest fixtures
 @pytest.fixture

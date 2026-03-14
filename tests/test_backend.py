@@ -541,3 +541,108 @@ class TestTagAwareMethods:
         backend.set_with_tags("mixed", "data", tags)
         result = backend.get_with_tags("mixed", tags)
         assert result == "data"
+
+
+class TestBackendModes:
+    """Tests for delegation vs standalone mode selection."""
+
+    def test_cache_name_and_location_raises(self):
+        """Specifying both CACHE_NAME and LOCATION raises ValueError."""
+        params = {
+            "CACHE_NAME": "default",
+            "LOCATION": "redis://127.0.0.1:6379/1",
+            "PREFIX": "TEST",
+        }
+        with pytest.raises(ValueError, match="not both"):
+            FragmentedKeysCacheBackend(params)
+
+    @patch("fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler")
+    @patch("django.core.cache.caches")
+    def test_delegation_mode_uses_cache_name(
+        self, mock_caches, mock_handler_class
+    ):
+        """CACHE_NAME triggers delegation mode."""
+        mock_cache = MagicMock()
+        mock_caches.__getitem__.return_value = mock_cache
+        mock_handler = MagicMock()
+        mock_handler_class.return_value = mock_handler
+
+        backend = FragmentedKeysCacheBackend(
+            {"CACHE_NAME": "my_redis", "PREFIX": "TEST"}
+        )
+        assert backend._cache_name == "my_redis"
+        mock_handler_class.assert_called_once_with("my_redis")
+
+    @patch("fragmented_keys.Configuration")
+    @patch(
+        "fragmented_keys_django.cache_backends.django_backend.import_string"
+    )
+    def test_standalone_mode_instantiates_backend(
+        self, mock_import, mock_config
+    ):
+        """LOCATION triggers standalone mode — instantiates BACKEND_CLASS."""
+        mock_backend_cls = MagicMock()
+        mock_underlying = MagicMock()
+        mock_backend_cls.return_value = mock_underlying
+        mock_import.return_value = mock_backend_cls
+
+        params = {
+            "LOCATION": "redis://127.0.0.1:6379/2",
+            "PREFIX": "STANDALONE",
+        }
+        backend = FragmentedKeysCacheBackend(params)
+
+        mock_import.assert_called_once_with(
+            "django_redis.cache.RedisCache"
+        )
+        mock_backend_cls.assert_called_once_with(
+            "redis://127.0.0.1:6379/2", params
+        )
+        assert backend._cache_name == "standalone"
+        assert backend._prefix == "STANDALONE"
+
+    @patch("fragmented_keys.Configuration")
+    @patch(
+        "fragmented_keys_django.cache_backends.django_backend.import_string"
+    )
+    def test_standalone_mode_custom_backend_class(
+        self, mock_import, mock_config
+    ):
+        """BACKEND_CLASS overrides the default django_redis backend."""
+        mock_backend_cls = MagicMock()
+        mock_import.return_value = mock_backend_cls
+
+        params = {
+            "LOCATION": "memcached://127.0.0.1:11211",
+            "BACKEND_CLASS": "django.core.cache.backends.memcached.PyMemcacheCache",
+            "PREFIX": "MC",
+        }
+        FragmentedKeysCacheBackend(params)
+
+        mock_import.assert_called_once_with(
+            "django.core.cache.backends.memcached.PyMemcacheCache"
+        )
+
+    def test_no_cache_name_no_location_defaults_to_delegation(self):
+        """Omitting both CACHE_NAME and LOCATION defaults to delegation with 'default'."""
+        params = {"PREFIX": "TEST"}
+        backend = FragmentedKeysCacheBackend(params)
+        assert backend._cache_name == "default"
+
+    @patch("fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler")
+    @patch("django.core.cache.caches")
+    def test_decr_key_not_found(self, mock_caches, mock_handler_class):
+        """decr raises ValueError when key doesn't exist."""
+        mock_cache = MagicMock()
+        mock_cache.has_key.return_value = False
+        mock_caches.__getitem__.return_value = mock_cache
+        mock_handler = MagicMock()
+        mock_handler._cache = mock_cache
+        mock_handler_class.return_value = mock_handler
+
+        backend = FragmentedKeysCacheBackend(
+            {"CACHE_NAME": "default", "PREFIX": "TEST"}
+        )
+
+        with pytest.raises(ValueError):
+            backend.decr("missing_key")
