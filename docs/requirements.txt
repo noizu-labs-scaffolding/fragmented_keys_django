@@ -1,0 +1,8 @@
+sphinx>=7.0
+sphinx-rtd-theme>=2.0
+sphinx-copybutton>=0.5
+myst-parser>=3.0
+# Project dependencies needed for autodoc
+django>=5.0
+django-redis>=6.0
+fragmented-keys>=0.1.3
