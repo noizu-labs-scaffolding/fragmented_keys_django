@@ -1,4 +1,21 @@
-"""Configuration utilities for fragmented_keys Django integration."""
+"""Configuration utilities for fragmented_keys Django integration.
+
+This module provides one-call setup functions for wiring the ``fragmented_keys``
+library into Django.  The typical entry point is :func:`configure_fragmented_keys`,
+called once in ``AppConfig.ready()``.
+
+**Initialization flow:**
+
+1. :func:`configure_fragmented_keys` creates a :class:`DjangoCacheHandler` wrapping
+   a named Django cache (e.g. ``"default"``).
+2. It sets this handler as the global default via
+   ``Configuration.set_default_cache_handler()`` — so every ``StandardTag`` and
+   ``StandardKey`` created afterwards uses your Django cache for version storage
+   without needing an explicit handler argument.
+3. It sets the global prefix via ``Configuration.set_global_prefix()`` — this
+   namespaces all tag version keys in Redis (e.g. ``NOZ:tag:User:42``) so multiple
+   apps sharing the same Redis instance don't collide.
+"""
 
 from __future__ import annotations
 
@@ -15,35 +32,41 @@ def configure_fragmented_keys(
 ) -> None:
     """Configure fragmented_keys global settings.
 
-    This function sets up the fragmented_keys library with a Django
-    cache handler and global prefix. It should be called once during
-    application initialization, typically in Django's AppConfig.ready()
-    or in settings.py.
+    This is the primary setup function.  Call it once during application
+    initialization — typically in ``AppConfig.ready()`` — to wire the
+    ``fragmented_keys`` library into Django's cache infrastructure.
 
-    Args:
-        cache_name: Name of the Django cache to use as the backend (default: "default")
-        prefix: Global prefix for all tag names (default: "NOZ")
-        global_prefix: Alias for prefix parameter (for backward compatibility)
+    Internally this does two things:
 
-    Example in AppConfig:
-        # myapp/apps.py
-        from django.apps import AppConfig
+    1. Creates a :class:`~fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler`
+       wrapping the Django cache identified by *cache_name* and registers it as the
+       global default handler.  After this call, ``StandardTag("User", "42")`` will
+       read/write its version counter through your Django cache without needing an
+       explicit ``handler=`` argument.
 
-        class MyAppConfig(AppConfig):
-            name = 'myapp'
+    2. Sets the global prefix to *prefix*.  The prefix is prepended to every tag
+       version key stored in the cache backend (e.g. ``NOZ:tag:User:42``), preventing
+       collisions when multiple applications share the same Redis instance.
 
-            def ready(self):
-                from fragmented_keys_django import configure_fragmented_keys
-                configure_fragmented_keys(
-                    cache_name='default',
-                    prefix='MYAPP'
-                )
+    :param cache_name: Name of the Django cache alias to use as the backing store
+        (must match a key in ``settings.CACHES``).  Default: ``"default"``.
+    :param prefix: Global prefix for all tag version keys.  Default: ``"NOZ"``.
+    :param global_prefix: Alias for *prefix* (backward compatibility).  If both
+        are provided, *global_prefix* takes precedence.
 
-    Example in settings.py (after Django apps are configured):
-        # settings.py
-        ...
-        from fragmented_keys_django import configure_fragmented_keys
-        configure_fragmented_keys(cache_name='default', prefix='NOZ')
+    :example:
+
+    .. code-block:: python
+
+       # myapp/apps.py
+       from django.apps import AppConfig
+
+       class MyAppConfig(AppConfig):
+           name = "myapp"
+
+           def ready(self):
+               from fragmented_keys_django import configure_fragmented_keys
+               configure_fragmented_keys(cache_name="default", prefix="MYAPP")
     """
     from fragmented_keys import Configuration
     from fragmented_keys_django.cache_backends.handlers import DjangoCacheHandler
@@ -57,23 +80,25 @@ def configure_fragmented_keys(
 
 
 def get_cache_handler(cache_name: str = "default"):
-    """Get a configured Django cache handler for use with fragmented_keys.
+    """Get a configured Django cache handler without modifying global state.
 
-    This is useful when you need a handler instance with a specific
-    cache name without modifying the global configuration.
+    Use this when you need a :class:`DjangoCacheHandler` for a specific Django
+    cache alias *without* changing the global default handler.  Useful for
+    constructing ``StandardTag`` or ``StandardKey`` objects that should target
+    a different cache than the globally-configured one.
 
-    Args:
-        cache_name: Name of the Django cache to use
+    :param cache_name: Django cache alias (must match a key in ``settings.CACHES``).
+    :returns: A :class:`~fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler` instance.
 
-    Returns:
-        DjangoCacheHandler instance
+    :example:
 
-    Example:
-        from fragmented_keys import StandardTag
-        from fragmented_keys_django.config import get_cache_handler
+    .. code-block:: python
 
-        handler = get_cache_handler('redis_cache')
-        tag = StandardTag('MyTag', 'instance', handler=handler)
+       from fragmented_keys import StandardTag
+       from fragmented_keys_django.config import get_cache_handler
+
+       handler = get_cache_handler("redis_cache")
+       tag = StandardTag("MyTag", "instance", handler=handler)
     """
     from fragmented_keys_django.cache_backends.handlers import DjangoCacheHandler
 
@@ -83,13 +108,22 @@ def get_cache_handler(cache_name: str = "default"):
 def reset_configuration() -> None:
     """Reset fragmented_keys configuration to defaults.
 
-    This is primarily useful for testing to ensure a clean state
-    between test cases.
+    Clears the global default cache handler and prefix by calling
+    ``Configuration.reset()`` on the upstream ``fragmented_keys`` library.
 
-    Example in tests:
-        def setUp(self):
-            from fragmented_keys_django.config import reset_configuration
-            reset_configuration()
+    Primarily useful in **test teardowns** to ensure a clean state between
+    test cases.  Without this, tag versions written by one test could leak
+    into another.
+
+    :example:
+
+    .. code-block:: python
+
+       from fragmented_keys_django.config import reset_configuration
+
+       class CacheTestCase(TestCase):
+           def setUp(self):
+               reset_configuration()
     """
     from fragmented_keys import Configuration
 
@@ -97,17 +131,20 @@ def reset_configuration() -> None:
 
 
 def set_cache_handler_globally(cache_name: str) -> None:
-    """Set a new global cache handler for fragmented_keys.
+    """Replace the global cache handler with one targeting a different Django cache.
 
-    Use this when you need to change the cache backend after
-    initial configuration.
+    Creates a new :class:`DjangoCacheHandler` wrapping *cache_name* and sets it
+    as the global default.  Use this when you need to switch the backing cache
+    after initial configuration (e.g. in tests or multi-tenant setups).
 
-    Args:
-        cache_name: Name of the Django cache to use
+    :param cache_name: Django cache alias to use.
 
-    Example:
-        from fragmented_keys_django.config import set_cache_handler_globally
-        set_cache_handler_globally('memcached_cache')
+    :example:
+
+    .. code-block:: python
+
+       from fragmented_keys_django.config import set_cache_handler_globally
+       set_cache_handler_globally("memcached_cache")
     """
     from fragmented_keys import Configuration
     from fragmented_keys_django.cache_backends.handlers import DjangoCacheHandler
@@ -117,14 +154,20 @@ def set_cache_handler_globally(cache_name: str) -> None:
 
 
 def set_global_prefix(prefix: str) -> None:
-    """Set the global prefix for all tag names.
+    """Change the global prefix for all tag version keys.
 
-    Args:
-        prefix: New global prefix string
+    The prefix is prepended to every tag version key stored in the cache
+    backend.  Changing it effectively makes all previously-stored tag versions
+    unreachable (equivalent to a full cache bust for tag-based caching).
 
-    Example:
-        from fragmented_keys_django.config import set_global_prefix
-        set_global_prefix('PRODUCTION')
+    :param prefix: New global prefix string.
+
+    :example:
+
+    .. code-block:: python
+
+       from fragmented_keys_django.config import set_global_prefix
+       set_global_prefix("PRODUCTION")
     """
     from fragmented_keys import Configuration
 
@@ -132,10 +175,9 @@ def set_global_prefix(prefix: str) -> None:
 
 
 def get_global_prefix() -> str:
-    """Get the current global prefix for tag names.
+    """Return the current global prefix for tag version keys.
 
-    Returns:
-        Current global prefix string
+    :returns: Current global prefix string.
     """
     from fragmented_keys import Configuration
 

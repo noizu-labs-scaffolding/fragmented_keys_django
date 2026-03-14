@@ -1,4 +1,24 @@
-"""Tag factory utilities for common cache invalidation patterns."""
+"""Tag factory utilities and template resolution for cache invalidation patterns.
+
+This module provides:
+
+**Tag factories** — semantic aliases for ``StandardTag`` construction:
+
+- :func:`model_tag` — for caches tied to a single model instance
+- :func:`list_tag` — for caches of collections/queries scoped to an owner
+- :func:`aggregate_tag` — for computed statistics or rollups
+- :func:`custom_tag` — for application-specific patterns
+
+All four are behaviorally identical (they all call ``StandardTag(name, str(id))``).
+The different names communicate intent to future readers.
+
+**Template resolution** — used internally by the ``@tagged_cache`` decorator:
+
+- :func:`parse_tag_template` — splits ``"User:{user_id}"`` into name + placeholder
+- :func:`resolve_tag_instance` — resolves the placeholder from function arguments
+- :func:`resolve_param_value` — extracts a named parameter from args/kwargs
+- :func:`build_composite_key` — convenience for building tags + key name together
+"""
 
 from __future__ import annotations
 
@@ -14,99 +34,131 @@ if TYPE_CHECKING:
 
 
 def model_tag(model_name: str, instance_id: str | int) -> StandardTag:
-    """Create a model-instance tag for cache invalidation.
+    """Create a tag for a specific model instance.
 
-    Use this when you want to invalidate cache based on a specific
-    model instance being modified.
+    Use this when a cache should be invalidated when a particular model
+    instance is modified.  Pairs naturally with
+    :meth:`~fragmented_keys_django.cache_utils.model_helpers.ModelTagManager.register_model`
+    — when the model is saved, the signal handler increments the same tag.
 
-    Args:
-        model_name: Name of the model (e.g., 'User', 'Donation')
-        instance_id: Primary key or unique identifier for the instance
+    Internally, this is just ``StandardTag(model_name, str(instance_id))``.
 
-    Returns:
-        StandardTag instance configured for model-instance invalidation
+    :param model_name: Tag name, typically matching the model's class name
+        (e.g. ``"User"``).  Must match the ``tag_name`` used in
+        ``ModelTagManager.register_model()`` for auto-invalidation to work.
+    :param instance_id: Primary key or unique identifier for the instance.
+    :returns: A :class:`StandardTag` instance.
 
-    Example:
-        user_tag = model_tag('User', str(user_id))
-        key = StandardKey('UserProfile', [user_tag])
+    :example:
+
+    .. code-block:: python
+
+       user_tag = model_tag("User", str(user_id))
+       key = StandardKey("UserProfile", [user_tag])
+       cache_key = key.get_key_str()
     """
     return StandardTag(model_name, str(instance_id))
 
 
 def list_tag(list_name: str, list_id: str | int) -> StandardTag:
-    """Create a tag for list/aggregation cache invalidation.
+    """Create a tag for a collection or query result scoped to an owner.
 
-    Use this when caching paginated lists or query results that
-    should be invalidated when any member of the list changes.
+    Use this when caching paginated lists, filtered querysets, or any
+    collection that should be invalidated when its membership changes.
 
-    Args:
-        list_name: Name of the list type (e.g., 'Donations', 'Campaigns')
-        list_id: Identifier for the specific list (e.g., user_id for user's donations)
+    Internally, this is just ``StandardTag(list_name, str(list_id))``.
 
-    Returns:
-        StandardTag instance configured for list invalidation
+    .. note::
 
-    Example:
-        donations_tag = list_tag('Donations', str(user_id))
-        key = StandardKey('UserDonations', [donations_tag])
+       You must arrange for the tag to be incremented when the list changes.
+       Options: register the parent model with ``ModelTagManager``, or call
+       ``StandardTag(list_name, str(list_id)).increment()`` manually when
+       items are added/removed.
+
+    :param list_name: Tag name for the list type (e.g. ``"Donations"``).
+    :param list_id: Identifier scoping the list (e.g. ``user_id`` for
+        "this user's donations").
+    :returns: A :class:`StandardTag` instance.
+
+    :example:
+
+    .. code-block:: python
+
+       donations_tag = list_tag("Donations", str(user_id))
+       key = StandardKey("UserDonations", [donations_tag])
     """
     return StandardTag(list_name, str(list_id))
 
 
 def aggregate_tag(metric_name: str, filter_hash: str) -> StandardTag:
-    """Create a tag for aggregated query cache invalidation.
+    """Create a tag for computed statistics or rollup caches.
 
-    Use this when caching computed statistics or analytics that
-    should be invalidated when underlying data changes.
+    Use this when caching aggregated queries, analytics dashboards, or
+    any computed result that depends on a combination of filters.
 
-    Args:
-        metric_name: Name of the metric or aggregation (e.g., 'DashboardStats')
-        filter_hash: Hash or representation of the query filters (e.g., 'daily_2024')
+    Internally, this is just ``StandardTag(metric_name, str(filter_hash))``.
 
-    Returns:
-        StandardTag instance configured for aggregation invalidation
+    :param metric_name: Tag name for the metric (e.g. ``"DashboardStats"``).
+    :param filter_hash: String representing the query filters
+        (e.g. ``f"daily_{user_id}"``).
+    :returns: A :class:`StandardTag` instance.
 
-    Example:
-        stats_tag = aggregate_tag('DashboardStats', f'daily_{user_id}')
-        key = StandardKey('DashboardStatistics', [stats_tag])
+    :example:
+
+    .. code-block:: python
+
+       stats_tag = aggregate_tag("DashboardStats", f"daily_{user_id}")
+       key = StandardKey("DashboardStatistics", [stats_tag])
     """
     return StandardTag(metric_name, str(filter_hash))
 
 
 def custom_tag(tag_name: str, instance_value: str | int) -> StandardTag:
-    """Create a custom tag for specialized invalidation scenarios.
+    """Create a tag for application-specific invalidation patterns.
 
-    Use this for application-specific cache invalidation patterns
-    that don't fit into the model, list, or aggregate categories.
+    Use this for patterns that don't fit the ``model``, ``list``, or
+    ``aggregate`` categories — e.g. weather data, feature flags,
+    configuration caches.
 
-    Args:
-        tag_name: Name of the custom tag
-        instance_value: Instance identifier for the tag
+    Internally, this is just ``StandardTag(tag_name, str(instance_value))``.
 
-    Returns:
-        StandardTag instance configured with custom values
+    :param tag_name: Tag name.
+    :param instance_value: Instance identifier.
+    :returns: A :class:`StandardTag` instance.
 
-    Example:
-        weather_tag = custom_tag('Weather', f'{city}_{date}')
-        key = StandardKey('WeatherData', [weather_tag])
+    :example:
+
+    .. code-block:: python
+
+       weather_tag = custom_tag("Weather", f"{city}_{date}")
+       key = StandardKey("WeatherData", [weather_tag])
     """
     return StandardTag(tag_name, str(instance_value))
 
 
 def parse_tag_template(tag_template: str) -> tuple[str, str]:
-    """Parse a tag template into name and placeholder pattern.
+    """Parse a tag template string into its name and placeholder components.
 
-    Tag templates use {placeholder} syntax, e.g., 'User:{user_id}' or 'Campaign:{id}'.
+    Tag templates use ``{placeholder}`` syntax.  For example,
+    ``"User:{user_id}"`` is parsed into tag name ``"User"`` and placeholder
+    ``"{user_id}"``.  Templates without placeholders (e.g. ``"Dashboard"``)
+    return an empty placeholder string.
 
-    Args:
-        tag_template: Tag template string with optional placeholders
+    The tag name is everything before the first ``{``, with trailing colons
+    and whitespace stripped.  The placeholder is everything from the first
+    ``{`` to the last ``}`` (inclusive).
 
-    Returns:
-        Tuple of (tag_name, placeholder_pattern)
+    :param tag_template: Tag template string (e.g. ``"User:{user_id}"``
+        or ``"Dashboard"``).
+    :returns: Tuple of ``(tag_name, placeholder_pattern)``.  The placeholder
+        is an empty string if the template has no ``{...}`` syntax.
 
-    Example:
-        tag_name, pattern = parse_tag_template('User:{user_id}')
-        # tag_name = 'User', pattern = '{user_id}'
+    :example:
+
+    .. code-block:: python
+
+       parse_tag_template("User:{user_id}")   # ("User", "{user_id}")
+       parse_tag_template("Dashboard")         # ("Dashboard", "")
     """
     # Find the placeholder part
     pattern = ""
@@ -127,22 +179,34 @@ def resolve_tag_instance(
     kwargs: dict[str, Any],
     func: Callable[P, Any],
 ) -> str:
-    """Resolve a tag template placeholder to its actual value.
+    """Resolve a tag template's placeholder to its actual value from function arguments.
 
-    Args:
-        tag_template: Tag template with placeholder (e.g., 'User:{user_id}')
-        args: Function positional arguments
-        kwargs: Function keyword arguments
-        func: The function being decorated
+    Extracts the parameter name from the ``{placeholder}`` in the tag template,
+    then looks it up in the function's positional or keyword arguments using
+    :func:`resolve_param_value`.
 
-    Returns:
-        Resolved instance value as string
+    If the template has no placeholder, returns an empty string (global tag).
 
-    Example:
-        # Given function: def get_user(user_id: int):
-        # And args: (42,)
-        value = resolve_tag_instance('User:{user_id}', args, {}, get_user)
-        # value = '42'
+    .. note::
+
+       Only the *first* ``{param}`` in the template is resolved.  Templates
+       like ``"User:{user_id}:Role:{role_id}"`` will only resolve ``user_id``.
+       Use separate tags for multi-dimension dependencies.
+
+    :param tag_template: Tag template string (e.g. ``"User:{user_id}"``).
+    :param args: Positional arguments passed to the decorated function.
+    :param kwargs: Keyword arguments passed to the decorated function.
+    :param func: The decorated function (used for signature introspection).
+    :returns: Resolved instance value as a string, or ``""`` for global tags
+        or unresolvable placeholders.
+
+    :example:
+
+    .. code-block:: python
+
+       # Given: def get_user(user_id: int): ...
+       # Called with: get_user(42)
+       resolve_tag_instance("User:{user_id}", (42,), {}, get_user)  # "42"
     """
     _, pattern = parse_tag_template(tag_template)
 
@@ -169,19 +233,19 @@ def resolve_param_value(
     kwargs: dict[str, Any],
     func: Callable[P, Any],
 ) -> Any:
-    """Resolve a parameter value from function arguments.
+    """Resolve a named parameter from a function's positional or keyword arguments.
 
-    Args:
-        param_name: Name of the parameter to resolve
-        args: Positional arguments passed to the function
-        kwargs: Keyword arguments passed to the function
-        func: The function being decorated
+    Checks ``kwargs`` first (for explicitly-passed keyword arguments), then
+    uses ``inspect.signature`` to find the parameter's positional index in
+    ``args``.
 
-    Returns:
-        The resolved parameter value
-
-    Raises:
-        KeyError: If the parameter cannot be found
+    :param param_name: Name of the parameter to resolve.
+    :param args: Positional arguments passed to the function.
+    :param kwargs: Keyword arguments passed to the function.
+    :param func: The function (used for signature introspection via
+        ``inspect.signature``).
+    :returns: The resolved parameter value (any type).
+    :raises KeyError: If *param_name* is not found in either ``args`` or ``kwargs``.
     """
     # Check kwargs first
     if param_name in kwargs:
@@ -208,27 +272,36 @@ def build_composite_key(
     tags: list[tuple[str, str | int]] | None = None,
     vary_params: list[tuple[str, Any]] | None = None,
 ) -> tuple[StandardTag, str]:
-    """Build a composite cache key with tags and varying parameters.
+    """Build tag objects and a composite key name in one call.
 
-    This helper function creates both the tags and the base key name
-    for use with StandardKey.
+    Convenience function that combines tag creation (from tuples) and key
+    name construction (from base name + vary parameters).  This is the same
+    logic that :func:`tagged_cache` uses internally, exposed as a standalone
+    function for use in services, management commands, or anywhere a
+    decorator doesn't fit.
 
-    Args:
-        base_name: Base name for the cache key
-        tags: List of (tag_name, instance_id) tuples
-        vary_params: List of (param_name, param_value) tuples for key variation
+    :param base_name: Base name for the cache key (e.g. ``"UserProfile"``).
+    :param tags: List of ``(tag_name, instance_id)`` tuples.  Each is
+        converted to a ``StandardTag``.
+    :param vary_params: List of ``(param_name, param_value)`` tuples.  Each
+        is appended to the key name as ``"{name}_{value}"``.
+    :returns: Tuple of ``(list_of_StandardTags, composed_key_name)``.
+        Create a ``StandardKey(key_name, tag_objs)`` with the result.
 
-    Returns:
-        Tuple of (list of StandardTag, string key name)
+    :example:
 
-    Example:
-        tags_list, key_name = build_composite_key(
-            'UserProfile',
-            tags=[('User', '42')],
-            vary_params=[('include_history', 'true')]
-        )
-        # Then use:
-        # key = StandardKey(key_name, tags_list)
+    .. code-block:: python
+
+       tag_objs, key_name = build_composite_key(
+           "UserProfile",
+           tags=[("User", "42")],
+           vary_params=[("include_history", "true")],
+       )
+       # tag_objs = [StandardTag("User", "42")]
+       # key_name = "UserProfile_include_history_true"
+
+       key = StandardKey(key_name, tag_objs)
+       cache_key = key.get_key_str()
     """
     tag_objs = []
     if tags:

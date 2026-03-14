@@ -1,4 +1,25 @@
-"""Model-based tag management with automatic invalidation via Django signals."""
+"""Model-based tag management with automatic invalidation via Django signals.
+
+This module provides :class:`ModelTagManager`, which connects Django's ORM
+signals to the ``fragmented_keys`` tag versioning system.  When a registered
+model instance is saved or deleted, its corresponding tag version is
+automatically incremented — no manual cache management needed.
+
+**Signal flow:**
+
+1. You call ``ModelTagManager.register_model(User)`` in ``AppConfig.ready()``.
+2. This connects ``post_save`` and ``post_delete`` signals for ``User``
+   with ``weak=False`` (so the handler isn't garbage collected).
+3. When ``User(pk=42).save()`` fires, Django emits ``post_save``.
+4. ``_on_model_change`` looks up ``User`` in ``_registered_models`` → finds
+   the tag name ``"User"``.
+5. Creates ``StandardTag("User", "42")`` and calls ``.increment()``.
+6. The tag version is bumped in the cache.  Any composite key embedding
+   ``User:42`` now resolves to a different string → automatic cache miss.
+
+**Scope is per-instance, not per-model.**  Saving ``User(pk=42)`` only
+increments ``User:42``.  All other users' cached data is untouched.
+"""
 
 from __future__ import annotations
 
@@ -13,26 +34,39 @@ if TYPE_CHECKING:
 
 
 class ModelTagManager:
-    """Manages model-based tags and auto-invalidation via signals.
+    """Manages model-based tags and auto-invalidation via Django signals.
 
-    This class provides automatic cache invalidation for Django models
-    by connecting to post_save and post_delete signals. When a model
-    instance is saved or deleted, all cache entries tagged with that
-    model-instance are automatically invalidated.
+    A class-level registry that maps Django model classes to tag names and
+    connects ORM signals for automatic tag version incrementing.
 
-    Example:
-        # Register models for auto-invalidation
-        ModelTagManager.register_model(User)
-        ModelTagManager.register_model(Donation, tag_name='Donation')
+    All methods are ``@classmethod`` — there is no need to instantiate
+    ``ModelTagManager``.  The registry (``_registered_models``) and signal
+    handlers (``_handlers``) are shared across the entire process.
 
-        # Now use tags in your cached functions
-        @tagged_cache(tags=['User:{user_id}'])
-        def get_user_profile(user_id):
-            return User.objects.get(pk=user_id)
+    **Typical setup** (in ``AppConfig.ready()``):
 
-        # Tag auto-increments when user is changed
-        user = User.objects.get(pk=1)
-        user.save()  # Cache for user 1 is now invalidated
+    .. code-block:: python
+
+       from fragmented_keys_django import ModelTagManager
+       from django.contrib.auth.models import User
+       from myapp.models import Donation
+
+       ModelTagManager.register_model(User)                      # tag: User:{pk}
+       ModelTagManager.register_model(Donation, tag_name="Don")   # tag: Don:{pk}
+
+    **How invalidation works:**
+
+    After registration, ``user.save()`` triggers ``post_save`` →
+    ``_on_model_change`` → ``StandardTag("User", str(user.pk)).increment()``.
+    Any cache key composed with ``User:{pk}`` now resolves to a different
+    string → cache miss → recomputation on next access.
+
+    .. warning::
+
+       The ``tag_name`` used at registration must match the tag names in your
+       ``@tagged_cache`` decorators and ``*_with_tags`` calls.  If you register
+       ``Donation`` with ``tag_name="Don"``, your decorators must use
+       ``tags=["Don:{donation_id}"]``, not ``"Donation:{donation_id}"``.
     """
 
     _registered_models: dict[Type[Model], str] = {}
@@ -46,12 +80,18 @@ class ModelTagManager:
         tag_name: str | None = None,
         auto_connect: bool = True,
     ) -> None:
-        """Register a model for auto-invalidation on save/delete.
+        """Register a model for automatic tag invalidation on save/delete.
 
-        Args:
-            model: Django model class to register
-            tag_name: Custom tag name (defaults to model.__name__)
-            auto_connect: If True, automatically connects signals (default: True)
+        Stores the model → tag name mapping and (by default) connects
+        ``post_save`` and ``post_delete`` signal handlers.
+
+        :param model: Django model class to register.
+        :param tag_name: Tag name to use for this model.  Defaults to
+            ``model.__name__`` (e.g. ``"User"``).  Must match the tag names
+            used in ``@tagged_cache`` decorators.
+        :param auto_connect: If ``True`` (default), immediately connects
+            signal handlers.  Set to ``False`` if you want to register
+            the mapping without connecting signals (e.g. for testing).
         """
         # Store for debugging and introspection
         cls._weak_model_classes[model.__name__] = model
@@ -64,7 +104,17 @@ class ModelTagManager:
 
     @classmethod
     def connect_signals(cls, model: Type[Model]) -> None:
-        """Connect post_save and post_delete signals to a model."""
+        """Connect ``post_save`` and ``post_delete`` signals for a model.
+
+        Disconnects any existing handlers first to prevent duplicate
+        registrations (safe to call multiple times, e.g. if ``AppConfig.ready()``
+        runs twice during testing).
+
+        Signal handlers are connected with ``weak=False`` to ensure they
+        persist for the lifetime of the process.
+
+        :param model: Django model class to connect signals for.
+        """
         # Disconnect existing handlers to avoid duplicates
         cls.disconnect_signals(model)
 
@@ -77,7 +127,12 @@ class ModelTagManager:
 
     @classmethod
     def disconnect_signals(cls, model: Type[Model]) -> None:
-        """Disconnect signals from a model."""
+        """Disconnect signal handlers for a model.
+
+        Safe to call even if no handlers are connected (no-op in that case).
+
+        :param model: Django model class to disconnect signals for.
+        """
         if model in cls._handlers:
             post_save.disconnect(cls._on_model_change, sender=model)
             post_delete.disconnect(cls._on_model_change, sender=model)
@@ -85,7 +140,21 @@ class ModelTagManager:
 
     @classmethod
     def _on_model_change(cls, sender: Type[Model], instance: Model, **kwargs: dict) -> None:
-        """Signal handler that invalidates tags when model changes."""
+        """Signal handler that increments a tag when a model instance changes.
+
+        Connected to ``post_save`` and ``post_delete`` for registered models.
+        Looks up the tag name for the sender model, then calls
+        ``StandardTag(tag_name, str(instance.pk)).increment()``.
+
+        Errors are silently caught to prevent signal failures from breaking
+        normal ORM operations.  This means a failed Redis connection won't
+        cause ``model.save()`` to raise — the cache simply won't be invalidated
+        until Redis recovers.
+
+        :param sender: The model class that sent the signal.
+        :param instance: The model instance that was saved/deleted.
+        :param kwargs: Additional signal kwargs (``created``, ``raw``, etc.).
+        """
         # Only invalidate if the model is registered
         if sender not in cls._registered_models:
             return
@@ -107,17 +176,29 @@ class ModelTagManager:
 
     @classmethod
     def invalidate_model_tag(cls, model: Type[Model] | str, pk: int | str) -> bool:
-        """Manually invalidate a specific model instance's tag.
+        """Manually increment a tag for a specific model instance.
 
-        This is useful when you need to invalidate cache for a specific
-        instance without triggering model signals.
+        Use this for changes that bypass Django's ORM signals — bulk SQL
+        updates, raw queries, external webhooks, management commands, or
+        Celery tasks that modify data without calling ``model.save()``.
 
-        Args:
-            model: Django model class or model name string
-            pk: Primary key value of the instance
+        This does the same thing the ``post_save`` signal handler does:
+        increments ``StandardTag(tag_name, str(pk))``.
 
-        Returns:
-            True if tag was found and incremented, False otherwise
+        :param model: Django model class, or model name as a string
+            (matched against ``model.__name__`` of registered models).
+        :param pk: Primary key of the instance to invalidate.
+        :returns: ``True`` if the tag was found and incremented,
+            ``False`` if the model is not registered or an error occurred.
+
+        :example:
+
+        .. code-block:: python
+
+           # After a bulk SQL update that bypasses .save()
+           cursor.execute("UPDATE auth_user SET is_active=False WHERE ...")
+           for user_id in affected_ids:
+               ModelTagManager.invalidate_model_tag(User, user_id)
         """
         tag_name: str
 
@@ -146,13 +227,14 @@ class ModelTagManager:
 
     @classmethod
     def get_tag_name_for_model(cls, model: Type[Model]) -> str | None:
-        """Get the tag name for a registered model.
+        """Get the registered tag name for a model.
 
-        Args:
-            model: Django model class
+        Tries a direct dict lookup first, then falls back to
+        ``django.apps.apps.get_model()`` for ``"app_label.ModelName"``
+        style lookups.
 
-        Returns:
-            Tag name if registered, None otherwise
+        :param model: Django model class.
+        :returns: Tag name string if registered, ``None`` otherwise.
         """
         from django.apps import apps
 
@@ -174,32 +256,42 @@ class ModelTagManager:
     def is_registered(cls, model: Type[Model]) -> bool:
         """Check if a model is registered for auto-invalidation.
 
-        Args:
-            model: Django model class
-
-        Returns:
-            True if registered, False otherwise
+        :param model: Django model class.
+        :returns: ``True`` if registered, ``False`` otherwise.
         """
         return model in cls._registered_models
 
     @classmethod
     def get_registered_models(cls) -> dict[Type[Model], str]:
-        """Get all registered models and their tag names.
+        """Return all registered models and their tag names.
 
-        Returns:
-            Dictionary mapping model classes to tag names
+        Returns a *copy* of the internal registry so callers cannot
+        accidentally mutate it.
+
+        :returns: Dict mapping model classes to their tag name strings.
         """
         return cls._registered_models.copy()
 
     @classmethod
     def unregister_model(cls, model: Type[Model]) -> None:
-        """Unregister a model from auto-invalidation."""
+        """Unregister a model, disconnecting its signal handlers.
+
+        After this call, ``model.save()`` will no longer increment any
+        tags.  Existing cached entries tagged with this model are not
+        deleted — they expire via their original TTL.
+
+        :param model: Django model class to unregister.
+        """
         if model in cls._registered_models:
             cls.disconnect_signals(model)
             del cls._registered_models[model]
 
     @classmethod
     def clear_all(cls) -> None:
-        """Clear all registered models and disconnect all signals."""
+        """Unregister all models and disconnect all signal handlers.
+
+        Useful in test teardowns to ensure signal handlers from one test
+        don't leak into another.
+        """
         for model in list(cls._registered_models.keys()):
             cls.unregister_model(model)
