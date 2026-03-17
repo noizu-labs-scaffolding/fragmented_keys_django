@@ -77,3 +77,39 @@ When any tag's version increments, the composed string changes, and the old cach
 | `get(key)` | `cache.get(key)` | Coerces result to `str` (handles bytes, dict, int) |
 | `set(key, value, ttl)` | `cache.set(key, value, timeout=ttl)` | |
 | `get_multi(keys)` | `cache.get_many(keys)` | Returns `dict[str, str]`, omits misses |
+
+### Two construction modes
+
+```mermaid
+flowchart TD
+    A{Config has LOCATION?} -->|Yes| B[Standalone mode]
+    A -->|No| C{Config has CACHE_NAME?}
+    C -->|Yes| D[Delegation mode]
+    C -->|No| E["Delegation mode<br/>(default → 'default')"]
+
+    B --> F["import_string(BACKEND_CLASS)<br/>instantiate backend(LOCATION, params)"]
+    F --> G["DjangoCacheHandler(cache=instance)"]
+
+    D --> H["DjangoCacheHandler(cache_name)"]
+    E --> H
+
+    G --> I["Configuration.set_default_cache_handler()"]
+    H --> I
+```
+
+- **Delegation**: `DjangoCacheHandler("default")` → `caches["default"]` → shares the existing connection pool and config
+- **Standalone**: `DjangoCacheHandler(cache=underlying)` → wraps a backend instance created by `FragmentedKeysCacheBackend.__init__` — no Django alias required
+
+Both paths converge: `self._handler` is set, and all tag-aware methods use it identically.
+
+## Telemetry Instrumentation Points
+
+The library emits no metrics/logs by default. Subclass the backend to add observability:
+
+| Hook | What it captures | Redis I/O |
+|------|-----------------|-----------|
+| `_build_tagged_key(key, tags, group_id)` | Tag version **reads** during key composition | 1 GET per tag |
+| `invalidate_tags(tags)` | Tag version **writes** during invalidation | 1 SET per tag |
+| `get_with_tags` / `set_with_tags` | Cache hit/miss, overall latency | 1 GET or SET for the data |
+
+See `docs/usage/telemetry.rst` for StatsD, Prometheus, and OpenTelemetry examples.
