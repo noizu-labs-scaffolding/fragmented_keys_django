@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add the parent directory to the path so we can import the package
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -30,9 +32,30 @@ if 'test_settings' not in sys.modules:
             CACHES={
                 'default': {
                     'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-                }
+                },
+                'redis': {
+                    'BACKEND': 'django_redis.cache.RedisCache',
+                    'LOCATION': 'redis://127.0.0.1:6379/15',
+                    'OPTIONS': {
+                        'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                    },
+                },
             },
             USE_TZ=True,
         )
         import django
         django.setup()
+
+
+@pytest.fixture
+def redis_cache():
+    """Provide a clean Redis cache (db 15) for integration tests.
+
+    Flushes the database before and after each test to ensure isolation.
+    """
+    from django.core.cache import caches
+
+    cache = caches['redis']
+    cache.clear()
+    yield cache
+    cache.clear()

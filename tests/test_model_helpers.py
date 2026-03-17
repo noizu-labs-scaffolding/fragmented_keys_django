@@ -62,21 +62,29 @@ class TestModelTagManager:
         ModelTagManager.clear_all()
         assert len(ModelTagManager.get_registered_models()) == 0
 
-    def test_invalidate_model_tag_by_class(self, mock_model_class):
+    @patch("fragmented_keys_django.cache_utils.model_helpers.StandardTag")
+    def test_invalidate_model_tag_by_class(self, mock_standard_tag, mock_model_class):
         """Test manual invalidation by model class."""
         ModelTagManager.register_model(mock_model_class)
+        mock_tag = MagicMock()
+        mock_standard_tag.return_value = mock_tag
 
         result = ModelTagManager.invalidate_model_tag(mock_model_class, 42)
 
         assert result is True
+        mock_tag.increment.assert_called_once()
 
-    def test_invalidate_model_tag_by_name(self, mock_model_class):
+    @patch("fragmented_keys_django.cache_utils.model_helpers.StandardTag")
+    def test_invalidate_model_tag_by_name(self, mock_standard_tag, mock_model_class):
         """Test manual invalidation by model name."""
         ModelTagManager.register_model(mock_model_class)
+        mock_tag = MagicMock()
+        mock_standard_tag.return_value = mock_tag
 
         result = ModelTagManager.invalidate_model_tag("MockModel", 42)
 
         assert result is True
+        mock_tag.increment.assert_called_once()
 
     def test_invalidate_model_tag_not_registered(self, mock_model_class):
         """Test manual invalidation of unregistered model."""

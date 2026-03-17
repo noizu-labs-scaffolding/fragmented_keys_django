@@ -1,6 +1,6 @@
 [project]
 name = "fragmented-keys-django"
-version = "0.1.1"
+version = "0.1.5"
 description = "Django cache management with fragmented keys for better invalidation support"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,9 +17,20 @@ dev = [
     "pytest-cov>=4.1.0",
 ]
 
-[tool.setuptools]
-packages = ["fragmented_keys_django"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fragmented_keys_django*"]
 
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that require a running Redis instance on localhost:6379",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

@@ -173,7 +173,7 @@ wheels = [
 
 [[package]]
 name = "fragmented-keys-django"
-version = "0.1.0"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "django" },
@@ -188,6 +188,11 @@ dev = [
     { name = "pytest-django" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "django", specifier = "==5.0.3" },
@@ -198,6 +203,9 @@ requires-dist = [
     { name = "pytest-django", marker = "extra == 'dev'", specifier = ">=4.5.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.0.2" }]
 
 [[package]]
 name = "iniconfig"

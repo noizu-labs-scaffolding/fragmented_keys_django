@@ -18,16 +18,23 @@ Two usage modes:
 
     frag = caches["fragmented"]
     data = frag.get_or_set_with_tags("profile", loader, [("User", "42")], timeout=3600)
-
-Key components:
-
-- :func:`~fragmented_keys_django.config.configure_fragmented_keys` — one-call global setup
-- :class:`~fragmented_keys_django.cache_utils.decorators.tagged_cache` — decorator for per-function caching
-- :class:`~fragmented_keys_django.cache_utils.model_helpers.ModelTagManager` — signal-driven auto-invalidation
-- :class:`~fragmented_keys_django.cache_backends.django_backend.FragmentedKeysCacheBackend` — Django cache backend
-- :func:`~fragmented_keys_django.cache_utils.tags.model_tag`,
-  :func:`~fragmented_keys_django.cache_utils.tags.list_tag`,
-  :func:`~fragmented_keys_django.cache_utils.tags.aggregate_tag` — tag factory functions
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.5"
+
+from fragmented_keys_django.config import configure_fragmented_keys, reset_configuration
+from fragmented_keys_django.cache_utils.decorators import tagged_cache
+from fragmented_keys_django.cache_utils.model_helpers import ModelTagManager
+from fragmented_keys_django.cache_backends.django_backend import FragmentedKeysCacheBackend
+from fragmented_keys_django.cache_utils.tags import model_tag, list_tag, aggregate_tag
+
+__all__ = [
+    "configure_fragmented_keys",
+    "reset_configuration",
+    "tagged_cache",
+    "ModelTagManager",
+    "FragmentedKeysCacheBackend",
+    "model_tag",
+    "list_tag",
+    "aggregate_tag",
+]
