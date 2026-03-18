@@ -77,7 +77,7 @@ Cache reads compose a key string from current tag versions. A cache miss trigger
 |-------|-----------|
 | Language | Python 3.11+ |
 | Framework | Django 5.0 |
-| Cache backend | django-redis 6.0 (Redis) |
+| Cache backend | Django's built-in `RedisCache` (django-redis optional) |
 | Core library | fragmented-keys >= 0.1.3 |
 | Testing | pytest, pytest-django, pytest-cov |
 | Documentation | Sphinx, Read the Docs |

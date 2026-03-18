@@ -29,7 +29,7 @@ current tag versions, enabling automatic invalidation when tags are incremented.
 
    CACHES = {
        "default": {
-           "BACKEND": "django_redis.cache.RedisCache",
+           "BACKEND": "django.core.cache.backends.redis.RedisCache",
            "LOCATION": "redis://127.0.0.1:6379/1",
        },
        "fragmented": {
@@ -48,7 +48,7 @@ current tag versions, enabling automatic invalidation when tags are incremented.
            "BACKEND": "fragmented_keys_django.cache_backends.django_backend.FragmentedKeysCacheBackend",
            "LOCATION": "redis://127.0.0.1:6379/1",
            "PREFIX": "NOZ_FRAG",
-           # "BACKEND_CLASS": "django_redis.cache.RedisCache",  # default
+           # "BACKEND_CLASS": "django.core.cache.backends.redis.RedisCache",  # default
        },
    }
 
@@ -87,7 +87,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         - ``LOCATION`` (str): Redis/cache connection URL (e.g.
           ``"redis://127.0.0.1:6379/1"``).
         - ``BACKEND_CLASS`` (str): Dotted path to the real cache backend class.
-          Default: ``"django_redis.cache.RedisCache"``.
+          Default: ``"django.core.cache.backends.redis.RedisCache"``.
 
         **Common to both modes:**
 
@@ -115,13 +115,13 @@ class FragmentedKeysCacheBackend(BaseCache):
        frag.invalidate_tags([("User", "42")])
     """
 
-    def __init__(self, params: dict[str, Any]) -> None:
+    def __init__(self, server: str, params: dict[str, Any]) -> None:
         super().__init__(params)
         self._prefix = params.get("PREFIX", "NOZ")
         self._options = params.get("OPTIONS", {})
 
         cache_name = params.get("CACHE_NAME")
-        location = params.get("LOCATION")
+        location = server or params.get("LOCATION")
 
         if cache_name and location:
             raise ValueError(
@@ -136,7 +136,7 @@ class FragmentedKeysCacheBackend(BaseCache):
             # Standalone mode — instantiate the underlying backend directly
             self._cache_name = params.get("CACHE_NAME", "standalone")
             backend_class = params.get(
-                "BACKEND_CLASS", "django_redis.cache.RedisCache"
+                "BACKEND_CLASS", "django.core.cache.backends.redis.RedisCache"
             )
             cls = import_string(backend_class)
             underlying = cls(location, params)

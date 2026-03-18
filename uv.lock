@@ -173,11 +173,10 @@ wheels = [
 
 [[package]]
 name = "fragmented-keys-django"
-version = "0.1.4"
+version = "0.1.9"
 source = { editable = "." }
 dependencies = [
     { name = "django" },
-    { name = "django-redis" },
     { name = "fragmented-keys" },
 ]
 
@@ -187,6 +186,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-django" },
 ]
+django-redis = [
+    { name = "django-redis" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -195,14 +197,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "django", specifier = "==5.0.3" },
-    { name = "django-redis", specifier = "==6.0.0" },
+    { name = "django", specifier = ">=5.0" },
+    { name = "django-redis", marker = "extra == 'django-redis'", specifier = ">=5.0.0" },
     { name = "fragmented-keys", specifier = ">=0.1.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
     { name = "pytest-django", marker = "extra == 'dev'", specifier = ">=4.5.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["django-redis", "dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.2" }]

@@ -34,11 +34,8 @@ if 'test_settings' not in sys.modules:
                     'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
                 },
                 'redis': {
-                    'BACKEND': 'django_redis.cache.RedisCache',
+                    'BACKEND': 'django.core.cache.backends.redis.RedisCache',
                     'LOCATION': 'redis://127.0.0.1:6379/15',
-                    'OPTIONS': {
-                        'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-                    },
                 },
             },
             USE_TZ=True,

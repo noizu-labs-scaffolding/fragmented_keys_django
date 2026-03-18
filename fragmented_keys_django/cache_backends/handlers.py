@@ -144,7 +144,7 @@ class DjangoCacheHandler:
         Implements the ``CacheHandler.set()`` protocol.  The value is stored
         as a plain string through Django's cache API.  The underlying backend
         may further serialize it (e.g. pickle for ``LocMemCache``, raw string
-        for ``django-redis``).
+        for ``django-redis``, raw string for Django's built-in Redis backend).
 
         :param key: Cache key to store under.
         :param value: String value to store.

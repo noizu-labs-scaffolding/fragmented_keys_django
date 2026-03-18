@@ -31,7 +31,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler = MagicMock()
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
 
         assert backend._cache_name == "default"
         assert backend._prefix == "TEST"
@@ -49,7 +49,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.get("test_key")
 
         assert result == "cached_value"
@@ -66,7 +66,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.get("test_key", default="default_value")
 
         assert result == "default_value"
@@ -81,7 +81,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         backend.set("test_key", "test_value", timeout=3600)
 
         mock_cache.set.assert_called_once_with(
@@ -101,7 +101,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.add("test_key", "test_value")
 
         assert result is True
@@ -118,7 +118,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.add("test_key", "test_value")
 
         assert result is False
@@ -133,7 +133,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         backend.delete("test_key")
 
         mock_cache.delete.assert_called_once()
@@ -148,7 +148,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
 
         # Build the expected cache keys so the mock returns matching keys
         cache_key1 = backend.make_key("key1")
@@ -175,7 +175,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.set_many({"key1": "value1", "key2": "value2"}, timeout=3600)
 
         assert result == []
@@ -191,7 +191,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         backend.delete_many(["key1", "key2"])
 
         mock_cache.delete_many.assert_called_once()
@@ -207,7 +207,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.has_key("test_key")
 
         assert result is True
@@ -222,7 +222,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         backend.clear()
 
         mock_cache.clear.assert_called_once()
@@ -238,7 +238,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.get_or_set("test_key", "default_value")
 
         assert result == "cached_value"
@@ -255,7 +255,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.get_or_set("test_key", "default_value")
 
         assert result == "default_value"
@@ -271,7 +271,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.touch("test_key", timeout=3600)
 
         assert result is True
@@ -288,7 +288,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.touch("test_key")
 
         assert result is False
@@ -305,7 +305,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.incr("test_key", delta=2)
 
         assert result == 5
@@ -321,7 +321,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
 
         with pytest.raises(ValueError):
             backend.incr("test_key")
@@ -338,7 +338,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         result = backend.decr("test_key", delta=2)
 
         assert result == 3
@@ -353,7 +353,7 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         backend.close()
 
         mock_cache.close.assert_called_once()
@@ -369,13 +369,13 @@ class TestFragmentedKeysCacheBackend:
         mock_handler._cache = mock_cache
         mock_handler_class.return_value = mock_handler
 
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         # Should not raise exception
         backend.close()
 
     def test_make_key_versioning(self, backend_params):
         """Test that make_key properly handles version parameter."""
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
 
         with patch.object(backend, "key_prefix", ""):
             key_v1 = backend.make_key("test_key", version=1)
@@ -385,7 +385,7 @@ class TestFragmentedKeysCacheBackend:
 
     def test_make_key_versioning_produces_different_keys(self, backend_params):
         """Test that make_key with different versions produces different keys."""
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
 
         with patch.object(backend, "key_prefix", ""):
             key_v1 = backend.make_key("test_key", version=1)
@@ -396,7 +396,7 @@ class TestFragmentedKeysCacheBackend:
 
     def test_get_backend_timeout_default(self, backend_params):
         """Test get_backend_timeout with default timeout."""
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
         backend.default_timeout = 300
 
         timeout = backend.get_backend_timeout(None)
@@ -404,7 +404,7 @@ class TestFragmentedKeysCacheBackend:
 
     def test_get_backend_timeout_explicit(self, backend_params):
         """Test get_backend_timeout with explicit timeout."""
-        backend = FragmentedKeysCacheBackend(backend_params)
+        backend = FragmentedKeysCacheBackend("", backend_params)
 
         timeout = backend.get_backend_timeout(600)
         assert timeout == 600
@@ -417,7 +417,7 @@ class TestTagAwareMethods:
     def backend(self):
         """Create a backend instance with a real in-memory cache mock."""
         params = {"CACHE_NAME": "default", "PREFIX": "TEST"}
-        backend = FragmentedKeysCacheBackend(params)
+        backend = FragmentedKeysCacheBackend("", params)
         return backend
 
     @pytest.fixture
@@ -550,11 +550,10 @@ class TestBackendModes:
         """Specifying both CACHE_NAME and LOCATION raises ValueError."""
         params = {
             "CACHE_NAME": "default",
-            "LOCATION": "redis://127.0.0.1:6379/1",
             "PREFIX": "TEST",
         }
         with pytest.raises(ValueError, match="not both"):
-            FragmentedKeysCacheBackend(params)
+            FragmentedKeysCacheBackend("redis://127.0.0.1:6379/1", params)
 
     @patch("fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler")
     @patch("django.core.cache.caches")
@@ -568,7 +567,7 @@ class TestBackendModes:
         mock_handler_class.return_value = mock_handler
 
         backend = FragmentedKeysCacheBackend(
-            {"CACHE_NAME": "my_redis", "PREFIX": "TEST"}
+            "", {"CACHE_NAME": "my_redis", "PREFIX": "TEST"}
         )
         assert backend._cache_name == "my_redis"
         mock_handler_class.assert_called_once_with("my_redis")
@@ -577,23 +576,20 @@ class TestBackendModes:
     @patch(
         "fragmented_keys_django.cache_backends.django_backend.import_string"
     )
-    def test_standalone_mode_instantiates_backend(
+    def test_standalone_mode_via_server_arg(
         self, mock_import, mock_config
     ):
-        """LOCATION triggers standalone mode — instantiates BACKEND_CLASS."""
+        """Server arg (from Django LOCATION) triggers standalone mode."""
         mock_backend_cls = MagicMock()
         mock_underlying = MagicMock()
         mock_backend_cls.return_value = mock_underlying
         mock_import.return_value = mock_backend_cls
 
-        params = {
-            "LOCATION": "redis://127.0.0.1:6379/2",
-            "PREFIX": "STANDALONE",
-        }
-        backend = FragmentedKeysCacheBackend(params)
+        params = {"PREFIX": "STANDALONE"}
+        backend = FragmentedKeysCacheBackend("redis://127.0.0.1:6379/2", params)
 
         mock_import.assert_called_once_with(
-            "django_redis.cache.RedisCache"
+            "django.core.cache.backends.redis.RedisCache"
         )
         mock_backend_cls.assert_called_once_with(
             "redis://127.0.0.1:6379/2", params
@@ -605,19 +601,39 @@ class TestBackendModes:
     @patch(
         "fragmented_keys_django.cache_backends.django_backend.import_string"
     )
+    def test_standalone_mode_via_params_location(
+        self, mock_import, mock_config
+    ):
+        """LOCATION in params also triggers standalone mode (fallback)."""
+        mock_backend_cls = MagicMock()
+        mock_underlying = MagicMock()
+        mock_backend_cls.return_value = mock_underlying
+        mock_import.return_value = mock_backend_cls
+
+        params = {
+            "LOCATION": "redis://127.0.0.1:6379/2",
+            "PREFIX": "STANDALONE",
+        }
+        backend = FragmentedKeysCacheBackend("", params)
+
+        assert backend._cache_name == "standalone"
+
+    @patch("fragmented_keys.Configuration")
+    @patch(
+        "fragmented_keys_django.cache_backends.django_backend.import_string"
+    )
     def test_standalone_mode_custom_backend_class(
         self, mock_import, mock_config
     ):
-        """BACKEND_CLASS overrides the default django_redis backend."""
+        """BACKEND_CLASS overrides the default Django Redis backend."""
         mock_backend_cls = MagicMock()
         mock_import.return_value = mock_backend_cls
 
         params = {
-            "LOCATION": "memcached://127.0.0.1:11211",
             "BACKEND_CLASS": "django.core.cache.backends.memcached.PyMemcacheCache",
             "PREFIX": "MC",
         }
-        FragmentedKeysCacheBackend(params)
+        FragmentedKeysCacheBackend("memcached://127.0.0.1:11211", params)
 
         mock_import.assert_called_once_with(
             "django.core.cache.backends.memcached.PyMemcacheCache"
@@ -626,7 +642,7 @@ class TestBackendModes:
     def test_no_cache_name_no_location_defaults_to_delegation(self):
         """Omitting both CACHE_NAME and LOCATION defaults to delegation with 'default'."""
         params = {"PREFIX": "TEST"}
-        backend = FragmentedKeysCacheBackend(params)
+        backend = FragmentedKeysCacheBackend("", params)
         assert backend._cache_name == "default"
 
     @patch("fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler")
@@ -641,7 +657,7 @@ class TestBackendModes:
         mock_handler_class.return_value = mock_handler
 
         backend = FragmentedKeysCacheBackend(
-            {"CACHE_NAME": "default", "PREFIX": "TEST"}
+            "", {"CACHE_NAME": "default", "PREFIX": "TEST"}
         )
 
         with pytest.raises(ValueError):

@@ -119,7 +119,7 @@ class TestBackendDelegationRedis:
     @pytest.fixture(autouse=True)
     def backend(self, redis_cache):
         params = {"CACHE_NAME": "redis", "PREFIX": "INT_DEL"}
-        self.backend = FragmentedKeysCacheBackend(params)
+        self.backend = FragmentedKeysCacheBackend("", params)
         yield
         Configuration.reset()
 
@@ -452,13 +452,9 @@ class TestBackendStandaloneRedis:
     @pytest.fixture(autouse=True)
     def backend(self, redis_cache):
         params = {
-            "LOCATION": "redis://127.0.0.1:6379/15",
             "PREFIX": "INT_SA",
-            "OPTIONS": {
-                "CLIENT_CLASS": "django_redis.client.DefaultClient",
-            },
         }
-        self.backend = FragmentedKeysCacheBackend(params)
+        self.backend = FragmentedKeysCacheBackend("redis://127.0.0.1:6379/15", params)
         yield
         self.backend.clear()
         Configuration.reset()

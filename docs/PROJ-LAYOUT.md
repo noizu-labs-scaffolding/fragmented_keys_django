@@ -59,7 +59,7 @@ fragmented_keys_django/
 ├── EXAMPLES.md                     # Usage examples
 ├── MIGRATION.md                    # Migration guide
 ├── README.md                       # Project overview and quick-start
-├── pyproject.toml                  # Package metadata, deps (Django 5.0.3, django-redis, fragmented-keys)
+├── pyproject.toml                  # Package metadata, deps (Django 5.0+, fragmented-keys; django-redis optional)
 ├── setup.py                        # Setuptools shim
 └── uv.lock                         # uv lockfile
 ```
@@ -70,7 +70,7 @@ fragmented_keys_django/
 |---------|---------|
 | `fragmented-keys>=0.1.3` | Core library — tag versioning and fragmented key logic |
 | `django==5.0.3` | Web framework providing cache framework and signals |
-| `django-redis==6.0.0` | Redis cache backend for Django |
+| `django-redis` (optional) | Third-party Redis backend with extras (compression, sentinel, sessions) |
 
 ## Key Files Requiring Setup
 

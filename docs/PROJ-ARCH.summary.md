@@ -19,7 +19,7 @@ Django integration for `fragmented-keys` — tag-versioned cache invalidation wh
 ## Backend Configuration Modes
 
 1. **Delegation**: `CACHE_NAME` points to an existing `CACHES` alias — shares connection pool, works with LocMemCache for tests
-2. **Standalone**: `LOCATION` provides connection URL directly — single config entry, instantiates `BACKEND_CLASS` (default: `django_redis.cache.RedisCache`)
+2. **Standalone**: `LOCATION` provides connection URL directly — single config entry, instantiates `BACKEND_CLASS` (default: `django.core.cache.backends.redis.RedisCache`)
 
 ## Invalidation Flow
 
@@ -31,4 +31,4 @@ No built-in telemetry. Subclass `FragmentedKeysCacheBackend` and override `_buil
 
 ## Stack
 
-Python 3.11+ · Django 5.0 · django-redis 6.0 · fragmented-keys >= 0.1.3 · pytest · Sphinx
+Python 3.11+ · Django 5.0+ · fragmented-keys >= 0.1.3 · pytest · Sphinx · django-redis (optional)

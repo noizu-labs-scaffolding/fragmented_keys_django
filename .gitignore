@@ -13,7 +13,7 @@ __pycache__/
 # Environment
 .env
 .venv/
-
+.envrc
 # Temp
 .tmp/
 

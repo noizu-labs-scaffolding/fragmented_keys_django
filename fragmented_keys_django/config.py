@@ -74,6 +74,18 @@ def configure_fragmented_keys(
     # Support both parameter names for convenience
     actual_prefix = global_prefix or prefix
 
+    # If the named cache IS a FragmentedKeysCacheBackend, its __init__ already
+    # registered a handler and prefix — reuse them to avoid infinite recursion
+    # (caches[name] would re-enter __init__ which calls DjangoCacheHandler
+    #  which calls caches[name] again).
+    try:
+        existing = Configuration.get_default_cache_handler()
+    except RuntimeError:
+        existing = None
+    if existing is not None:
+        Configuration.set_global_prefix(actual_prefix)
+        return
+
     handler = DjangoCacheHandler(cache_name)
     Configuration.set_default_cache_handler(handler)
     Configuration.set_global_prefix(actual_prefix)
