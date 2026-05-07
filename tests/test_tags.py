@@ -2,11 +2,14 @@
 
 import pytest
 
+from fragmented_keys import ConstantTag
+
 from fragmented_keys_django.cache_utils.tags import (
     model_tag,
     list_tag,
     aggregate_tag,
     custom_tag,
+    constant_tag,
     parse_tag_template,
     resolve_tag_instance,
     resolve_param_value,
@@ -51,6 +54,27 @@ class TestTagFactories:
 
         assert tag is not None
         assert tag._instance == "NYC_20240115"
+
+    def test_constant_tag(self):
+        """Test constant_tag creates ConstantTag correctly."""
+        tag = constant_tag("env", "production")
+
+        assert isinstance(tag, ConstantTag)
+        assert tag._instance == "production"
+        assert tag.get_tag_version() == 1.0
+
+    def test_constant_tag_custom_version(self):
+        """Test constant_tag with custom version."""
+        tag = constant_tag("api_version", "v2", version=2.0)
+
+        assert isinstance(tag, ConstantTag)
+        assert tag.get_tag_version() == 2.0
+
+    def test_constant_tag_increment_is_noop(self):
+        """ConstantTag.increment() should not change the version."""
+        tag = constant_tag("env", "prod", version=1.0)
+        tag.increment()
+        assert tag.get_tag_version() == 1.0
 
 
 class TestParseTagTemplate:

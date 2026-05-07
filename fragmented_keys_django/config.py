@@ -29,6 +29,7 @@ def configure_fragmented_keys(
     cache_name: str = "default",
     prefix: str = "NOZ",
     global_prefix: str | None = None,
+    setup_key_ring: bool = True,
 ) -> None:
     """Configure fragmented_keys global settings.
 
@@ -53,6 +54,9 @@ def configure_fragmented_keys(
     :param prefix: Global prefix for all tag version keys.  Default: ``"NOZ"``.
     :param global_prefix: Alias for *prefix* (backward compatibility).  If both
         are provided, *global_prefix* takes precedence.
+    :param setup_key_ring: If ``True`` (default), creates and registers a
+        default :class:`FragmentedKeyRing` backed by the configured handler.
+        Retrieve it later with ``get_key_ring("default")``.
 
     :example:
 
@@ -84,11 +88,33 @@ def configure_fragmented_keys(
         existing = None
     if existing is not None:
         Configuration.set_global_prefix(actual_prefix)
+        if setup_key_ring:
+            from fragmented_keys import FragmentedKeyRing
+            from fragmented_keys_django.cache_utils.key_rings import register_key_ring, _rings
+
+            if "default" not in _rings:
+                ring = FragmentedKeyRing(
+                    cache_handlers={"django": existing},
+                    default_cache_handler="django",
+                    default_prefix=actual_prefix,
+                )
+                register_key_ring("default", ring)
         return
 
     handler = DjangoCacheHandler(cache_name)
     Configuration.set_default_cache_handler(handler)
     Configuration.set_global_prefix(actual_prefix)
+
+    if setup_key_ring:
+        from fragmented_keys import FragmentedKeyRing
+        from fragmented_keys_django.cache_utils.key_rings import register_key_ring
+
+        ring = FragmentedKeyRing(
+            cache_handlers={"django": handler},
+            default_cache_handler="django",
+            default_prefix=actual_prefix,
+        )
+        register_key_ring("default", ring)
 
 
 def get_cache_handler(cache_name: str = "default"):
@@ -120,12 +146,12 @@ def get_cache_handler(cache_name: str = "default"):
 def reset_configuration() -> None:
     """Reset fragmented_keys configuration to defaults.
 
-    Clears the global default cache handler and prefix by calling
-    ``Configuration.reset()`` on the upstream ``fragmented_keys`` library.
+    Clears the global default cache handler, prefix, and key ring registry
+    by calling ``Configuration.reset()`` on the upstream ``fragmented_keys``
+    library and ``clear_key_rings()`` on the Django wrapper.
 
     Primarily useful in **test teardowns** to ensure a clean state between
-    test cases.  Without this, tag versions written by one test could leak
-    into another.
+    test cases.
 
     :example:
 
@@ -138,8 +164,10 @@ def reset_configuration() -> None:
                reset_configuration()
     """
     from fragmented_keys import Configuration
+    from fragmented_keys_django.cache_utils.key_rings import clear_key_rings
 
     Configuration.reset()
+    clear_key_rings()
 
 
 def set_cache_handler_globally(cache_name: str) -> None:

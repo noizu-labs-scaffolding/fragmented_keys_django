@@ -58,6 +58,108 @@ sequenceDiagram
     Note over R: Old composite keys now<br/>resolve to different strings →<br/>cache miss on next read
 ```
 
+## Cache Invalidation (via bulk operations)
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant QS as CacheAwareQuerySet
+    participant DB as Database
+    participant MTM as ModelTagManager
+    participant T as StandardTag
+    participant H as DjangoCacheHandler
+    participant R as Redis
+
+    C->>QS: .filter(org_id=42).delete()
+    QS->>DB: SELECT pk FROM model WHERE org_id=42
+    DB-->>QS: [pk1, pk2, pk3]
+    QS->>DB: DELETE FROM model WHERE org_id=42
+    DB-->>QS: (3, {"app.Model": 3})
+    loop For each pk
+        QS->>MTM: _fire_lifecycle("delete", model, FakePKInstance(pk))
+        MTM->>T: tag.increment()
+        T->>H: set(tag_version_key, new_version)
+        H->>R: set
+    end
+    QS-->>C: (3, {"app.Model": 3})
+```
+
+## KeyRing Flow (define once, use everywhere)
+
+```mermaid
+sequenceDiagram
+    participant App as AppConfig.ready()
+    participant CFG as configure_fragmented_keys()
+    participant REG as KeyRing Registry
+    participant FKR as FragmentedKeyRing
+
+    App->>CFG: configure_fragmented_keys(prefix="NOZ")
+    CFG->>FKR: FragmentedKeyRing(handlers, prefix)
+    CFG->>REG: register_key_ring("default", ring)
+
+    Note over App: Define key templates
+    App->>REG: get_key_ring("default")
+    REG-->>App: ring
+    App->>FKR: ring.define_key("org_list", ["organization", "category", "review"])
+```
+
+```mermaid
+sequenceDiagram
+    participant V as View
+    participant REG as KeyRing Registry
+    participant FKR as FragmentedKeyRing
+    participant K as Key Object
+    participant H as DjangoCacheHandler
+    participant R as Redis
+
+    V->>REG: get_key_ring("default")
+    REG-->>V: ring
+    V->>FKR: ring.get_org_list_key_obj("cat:education", "__all__", "cat:education")
+    FKR-->>V: key object
+    V->>K: key.get_key_str()
+    K->>H: read tag versions
+    H->>R: get_many(tag_keys)
+    R-->>H: versions
+    H-->>K: versions
+    K-->>V: "NOZ:organization:cat:education:v2:category:__all__:v1:review:cat:education:v3:org_list"
+    V->>H: cache.get(composite_key)
+    H->>R: get
+    R-->>V: cached result or miss
+```
+
+## Backend *_with_tags Flow
+
+```mermaid
+sequenceDiagram
+    participant V as View
+    participant FB as FragmentedKeysCacheBackend
+    participant SK as StandardKey
+    participant T as Tags
+    participant H as DjangoCacheHandler
+    participant R as Redis
+
+    V->>FB: get_or_set_with_tags("profile", loader, [("User", "42")], timeout=3600)
+    FB->>FB: _normalize_tags([("User", "42")])
+    FB->>T: StandardTag("User", "42")
+    FB->>SK: StandardKey("profile", [tag])
+    FB->>FB: _build_tagged_key("profile", [tag])
+    SK->>T: read tag versions
+    T->>H: get(version_key)
+    H->>R: get
+    R-->>FB: composite key string
+    FB->>H: cache.get(composite_key)
+    H->>R: get
+    alt cache hit
+        R-->>V: cached result
+    else cache miss
+        FB->>V: call loader()
+        V-->>FB: computed result
+        FB->>H: cache.set(composite_key, result, 3600)
+        H->>R: set
+        FB-->>V: computed result
+    end
+```
+
 ## Key Composition
 
 A `StandardKey` produces its cache key string by concatenating:
@@ -101,6 +203,23 @@ flowchart TD
 - **Standalone**: `DjangoCacheHandler(cache=underlying)` → wraps a backend instance created by `FragmentedKeysCacheBackend.__init__` — no Django alias required
 
 Both paths converge: `self._handler` is set, and all tag-aware methods use it identically.
+
+## Configuration Initialization
+
+```mermaid
+flowchart TD
+    A["configure_fragmented_keys()<br/>(AppConfig.ready)"] --> B{Existing handler?}
+    B -->|Yes: recursion guard| C[Reuse existing handler]
+    B -->|No| D["Create DjangoCacheHandler(cache_name)"]
+    D --> E["Configuration.set_default_cache_handler()"]
+    C --> F["Configuration.set_global_prefix()"]
+    E --> F
+    F --> G{setup_key_ring?}
+    G -->|Yes| H["Create FragmentedKeyRing"]
+    H --> I["register_key_ring('default', ring)"]
+    G -->|No| J[Done]
+    I --> J
+```
 
 ## Telemetry Instrumentation Points
 

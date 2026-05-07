@@ -64,7 +64,10 @@ if TYPE_CHECKING:
 
 from django.core.cache.backends.base import BaseCache
 from django.utils.module_loading import import_string
-from fragmented_keys import FragmentedKeyRing, StandardKey, StandardTag
+import warnings
+
+from fragmented_keys import ConstantTag, FragmentedKeyRing, StandardKey, StandardTag
+from fragmented_keys.tag.base import BaseTag
 
 
 class FragmentedKeysCacheBackend(BaseCache):
@@ -342,32 +345,79 @@ class FragmentedKeysCacheBackend(BaseCache):
     # ── Tag-aware API ──────────────────────────────────────────────
 
     def _normalize_tags(
-        self, tags: list[tuple[str, str] | StandardTag],
-    ) -> list[StandardTag]:
-        """Convert mixed tag inputs into a uniform list of ``StandardTag`` objects.
+        self, tags: list[tuple | BaseTag | dict],
+    ) -> list[BaseTag]:
+        """Convert mixed tag inputs into a uniform list of tag objects.
 
-        Accepts two input forms:
+        Accepted input forms:
 
-        - ``StandardTag`` instances — passed through unchanged.
-        - ``(name, instance)`` tuples — converted to
-          ``StandardTag(str(name), str(instance), handler=self._handler)``.
+        - ``BaseTag`` subclass instances (``StandardTag``, ``ConstantTag``, or
+          custom) — passed through unchanged.
+        - ``(name, instance)`` 2-tuple — ``StandardTag(name, instance)``.
+        - ``(name,)`` 1-tuple — ``StandardTag(name, "*")``.
+          Emits a ``DeprecationWarning`` suggesting an explicit 2-tuple.
+        - ``(name, instance, "constant")`` 3-tuple — ``ConstantTag(name, instance)``.
+        - ``dict`` with keys ``tag``, ``instance``, and optional ``type``
+          (``"standard"`` or ``"constant"``), ``version`` — full control form.
 
-        :param tags: List of tags in either form, or a mix.
-        :returns: List of ``StandardTag`` objects.
-        :raises TypeError: If an element is neither a ``StandardTag`` nor a 2-tuple.
+        :param tags: List of tags in any supported form.
+        :returns: List of ``BaseTag`` subclass instances.
+        :raises TypeError: If an element doesn't match any accepted form.
         """
-        result: list[StandardTag] = []
+        result: list[BaseTag] = []
         for tag in tags:
-            if isinstance(tag, StandardTag):
+            if isinstance(tag, BaseTag):
                 result.append(tag)
-            elif isinstance(tag, tuple) and len(tag) == 2:
-                name, instance = tag
-                result.append(StandardTag(str(name), str(instance), handler=self._handler))
+            elif isinstance(tag, dict):
+                result.append(self._tag_from_dict(tag))
+            elif isinstance(tag, tuple):
+                result.append(self._tag_from_tuple(tag))
             else:
                 raise TypeError(
-                    f"Tags must be StandardTag instances or (name, instance) tuples, got {type(tag)}"
+                    f"Tags must be BaseTag instances, tuples, or dicts, got {type(tag)}"
                 )
         return result
+
+    def _tag_from_tuple(self, tag: tuple) -> BaseTag:
+        if len(tag) == 1:
+            warnings.warn(
+                f"1-tuple tag ({tag[0]!r},) is deprecated. "
+                f"Use an explicit 2-tuple ('{tag[0]}', '<scope_id>') instead.",
+                DeprecationWarning,
+                stacklevel=4,
+            )
+            return StandardTag(str(tag[0]), "*", handler=self._handler)
+        elif len(tag) == 2:
+            name, instance = tag
+            return StandardTag(str(name), str(instance), handler=self._handler)
+        elif len(tag) == 3:
+            name, instance, tag_type = tag
+            if str(tag_type).lower() == "constant":
+                return ConstantTag(str(name), str(instance), handler=self._handler)
+            raise TypeError(
+                f"3-tuple tag type must be 'constant', got {tag_type!r}"
+            )
+        raise TypeError(
+            f"Tag tuples must be 1-, 2-, or 3-element, got {len(tag)}-element"
+        )
+
+    def _tag_from_dict(self, tag: dict) -> BaseTag:
+        tag_name = str(tag["tag"])
+        instance = str(tag.get("instance", ""))
+        tag_type = str(tag.get("type", "standard")).lower()
+        version = tag.get("version")
+
+        if tag_type == "constant":
+            return ConstantTag(
+                tag_name, instance,
+                version=float(version) if version is not None else 1.0,
+                handler=self._handler,
+            )
+        return StandardTag(
+            tag_name, instance,
+            version=float(version) if version is not None else None,
+            handler=self._handler,
+        )
 
     def _build_tagged_key(
         self,

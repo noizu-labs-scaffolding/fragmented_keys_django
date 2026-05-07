@@ -470,8 +470,51 @@ class TestTagAwareMethods:
         with pytest.raises(TypeError):
             backend._normalize_tags([123])
 
-        with pytest.raises(TypeError):
-            backend._normalize_tags([("a", "b", "c")])  # 3-tuple
+    def test_3_tuple_constant_tag(self, backend):
+        """3-tuple with 'constant' creates a ConstantTag."""
+        from fragmented_keys import ConstantTag
+        tags = backend._normalize_tags([("env", "prod", "constant")])
+        assert len(tags) == 1
+        assert isinstance(tags[0], ConstantTag)
+
+    def test_3_tuple_invalid_type_raises(self, backend):
+        """3-tuple with invalid type raises TypeError."""
+        with pytest.raises(TypeError, match="must be 'constant'"):
+            backend._normalize_tags([("a", "b", "invalid")])
+
+    def test_dict_tag_standard(self, backend):
+        """Dict with type='standard' creates a StandardTag."""
+        from fragmented_keys import StandardTag
+        tags = backend._normalize_tags([{"tag": "user", "instance": "42"}])
+        assert len(tags) == 1
+        assert isinstance(tags[0], StandardTag)
+
+    def test_dict_tag_constant(self, backend):
+        """Dict with type='constant' creates a ConstantTag."""
+        from fragmented_keys import ConstantTag
+        tags = backend._normalize_tags([
+            {"tag": "api", "instance": "v2", "type": "constant", "version": 2.0}
+        ])
+        assert len(tags) == 1
+        assert isinstance(tags[0], ConstantTag)
+        assert tags[0].get_tag_version() == 2.0
+
+    def test_1_tuple_deprecated(self, backend):
+        """1-tuple works but emits DeprecationWarning."""
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            tags = backend._normalize_tags([("user",)])
+            assert len(tags) == 1
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+
+    def test_base_tag_passthrough(self, backend):
+        """Raw ConstantTag instances pass through unchanged."""
+        from fragmented_keys import ConstantTag
+        raw = ConstantTag("env", "prod", version=1.0)
+        tags = backend._normalize_tags([raw])
+        assert tags[0] is raw
 
     def test_delete_with_tags(self, backend, tags_tuples):
         """delete_with_tags removes the composite entry."""
