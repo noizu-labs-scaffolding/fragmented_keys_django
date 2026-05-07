@@ -31,11 +31,16 @@ also bump the parent organization's review-list tag::
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Callable, Type
 
 from django.db.models.signals import post_delete, post_save
+from opentelemetry import trace
 
 from fragmented_keys import StandardTag
+
+logger = logging.getLogger(__name__)
+tracer = trace.get_tracer("gnp-backend.cache")
 
 if TYPE_CHECKING:
     from django.db.models import Model
@@ -68,6 +73,12 @@ class ModelTagManager:
            on_update=lambda s, i, uf: [("review", str(i.pk)), ("review", f"org:{i.organization_id}")],
            on_delete=lambda s, i: [("review", str(i.pk)), ("review", f"org:{i.organization_id}")],
        )
+
+    # @todo @pri-2 @keith - Lifecycle hook expansion:
+    # 1. Add on_fetch/on_get hooks that fire on cache reads (useful for tracking access patterns)
+    # 2. Add pre_save/pre_delete hooks (currently only post_save/post_delete are connected)
+    # 3. Consider on_list hook for queryset-level operations (e.g., .filter().values_list())
+    # 4. CacheAwareManager already handles bulk write ops - extend to support read-side hooks
     """
 
     _registered_models: dict[Type[Model], dict[str, Any]] = {}
@@ -140,13 +151,56 @@ class ModelTagManager:
 
     @classmethod
     def _increment_tags(cls, tags_to_bump: list[tuple[str, str]]) -> None:
-        """Increment all tags in the list. Errors are silently swallowed."""
-        for tag_name, instance_id in tags_to_bump:
-            try:
-                tag = StandardTag(tag_name, str(instance_id))
-                tag.increment()
-            except Exception:
-                pass
+        """Increment all tags in the list, plus global ``*`` tags.
+
+        For each unique ``tag_name`` in the list, also bumps
+        ``StandardTag(tag_name, "*")`` so that 1-tuple cache keys
+        (which resolve to the global ``*`` instance) are invalidated.
+
+        This is a temporary measure while views migrate from 1-tuples
+        to 2-tuples.  Errors are logged and recorded on the active span.
+        """
+        with tracer.start_as_current_span("cache.invalidation") as span:
+            span.set_attribute("cache.tags.count", len(tags_to_bump))
+            tag_names = list(set(t[0] for t in tags_to_bump))[:10]
+            span.set_attribute("cache.tags.names", ",".join(tag_names))
+
+            bumped = 0
+            errors = 0
+            global_tags_bumped: set[str] = set()
+            for tag_name, instance_id in tags_to_bump:
+                try:
+                    tag = StandardTag(tag_name, str(instance_id))
+                    tag.increment()
+                    bumped += 1
+                except Exception as exc:
+                    errors += 1
+                    logger.warning(
+                        "Tag increment failed",
+                        extra={"tag": tag_name, "instance": instance_id},
+                        exc_info=True,
+                    )
+                    span.record_exception(exc)
+
+                # Bump the global * tag for this tag_name (once per name).
+                # Skip if the instance_id is already "*" to avoid double-bump.
+                if instance_id != "*" and tag_name not in global_tags_bumped:
+                    global_tags_bumped.add(tag_name)
+                    try:
+                        global_tag = StandardTag(tag_name, "*")
+                        global_tag.increment()
+                        bumped += 1
+                    except Exception as exc:
+                        errors += 1
+                        logger.warning(
+                            "Tag increment failed",
+                            extra={"tag": tag_name, "instance": "*"},
+                            exc_info=True,
+                        )
+                        span.record_exception(exc)
+
+            span.set_attribute("cache.tags.bumped", bumped)
+            span.set_attribute("cache.tags.errors", errors)
 
     @classmethod
     def _on_model_save(
@@ -175,8 +229,12 @@ class ModelTagManager:
                 tags_to_bump = [(tag_name, str(pk_value))]
 
             cls._increment_tags(tags_to_bump)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Cache invalidation failed on model change",
+                extra={"model": sender.__name__, "pk": str(pk_value)},
+                exc_info=True,
+            )
 
     @classmethod
     def _on_model_delete(
@@ -200,8 +258,12 @@ class ModelTagManager:
                 tags_to_bump = [(tag_name, str(pk_value))]
 
             cls._increment_tags(tags_to_bump)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Cache invalidation failed on model change",
+                extra={"model": sender.__name__, "pk": str(pk_value)},
+                exc_info=True,
+            )
 
     @classmethod
     def _fire_lifecycle(
@@ -243,8 +305,16 @@ class ModelTagManager:
                 tags_to_bump = [(tag_name, str(pk_value))]
 
             cls._increment_tags(tags_to_bump)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Lifecycle callback failed",
+                extra={"model": model.__name__ if hasattr(model, '__name__') else str(model),
+                       "signal_type": signal_type},
+                exc_info=True,
+            )
+            # @todo @pri-2 @keith - trace tracking and logging to signoz with json format needed
+            # For now errors are logged to stdout. Future: emit structured JSON logs that SigNoz
+            # can index, and add span.record_exception() for trace correlation.
 
     @classmethod
     def invalidate_scope(cls, tag_name: str, scope_id: str) -> bool:
@@ -265,8 +335,7 @@ class ModelTagManager:
            ModelTagManager.invalidate_scope("review", "org:42")
         """
         try:
-            tag = StandardTag(tag_name, str(scope_id))
-            tag.increment()
+            cls._increment_tags([(tag_name, str(scope_id))])
             return True
         except Exception:
             return False
@@ -302,24 +371,19 @@ class ModelTagManager:
         if tag_name is None:
             return 0
 
-        count = 0
+        tags_to_bump: list[tuple[str, str]] = []
         if pks:
             for pk in pks:
-                try:
-                    StandardTag(tag_name, str(pk)).increment()
-                    count += 1
-                except Exception:
-                    pass
-
+                tags_to_bump.append((tag_name, str(pk)))
         if scopes:
             for scope_id in scopes:
-                try:
-                    StandardTag(tag_name, str(scope_id)).increment()
-                    count += 1
-                except Exception:
-                    pass
+                tags_to_bump.append((tag_name, str(scope_id)))
 
-        return count
+        if not tags_to_bump:
+            return 0
+
+        cls._increment_tags(tags_to_bump)
+        return len(tags_to_bump)
 
     @classmethod
     def invalidate_model_tag(cls, model: Type[Model] | str, pk: int | str) -> bool:
@@ -336,8 +400,7 @@ class ModelTagManager:
             return False
 
         try:
-            tag = StandardTag(tag_name, str(pk))
-            tag.increment()
+            cls._increment_tags([(tag_name, str(pk))])
             return True
         except Exception:
             return False
