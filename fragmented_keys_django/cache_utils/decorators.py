@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     P = ParamSpec("P")
 
 from fragmented_keys import StandardKey, StandardTag
+from fragmented_keys_django.cache_utils.epoch import with_epoch
 
 from fragmented_keys_django.cache_utils.tags import parse_tag_template, resolve_tag_instance
 
@@ -131,7 +132,7 @@ def tagged_cache(
                     base_key_name = f"{base_key_name}_{'_'.join(key_parts)}"
 
             # Create composite key with tags
-            key = StandardKey(base_key_name, tag_objs)
+            key = StandardKey(base_key_name, with_epoch(tag_objs))
             cache_key = key.get_key_str()
 
             # Try cache first
@@ -264,7 +265,7 @@ def cached_async(
                 if key_parts:
                     base_key_name = f"{base_key_name}_{'_'.join(key_parts)}"
 
-            key = StandardKey(base_key_name, tag_objs)
+            key = StandardKey(base_key_name, with_epoch(tag_objs))
             cache_key = key.get_key_str()
 
             result = cache.get(cache_key)

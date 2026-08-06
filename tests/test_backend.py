@@ -84,10 +84,15 @@ class TestFragmentedKeysCacheBackend:
         backend = FragmentedKeysCacheBackend("", backend_params)
         backend.set("test_key", "test_value", timeout=3600)
 
+        # The key is handed to the wrapped backend verbatim, with Django's
+        # version forwarded, so that backend applies its own key naming exactly
+        # once. Pre-prefixing here as well produced ":1::1:test_key" and split
+        # the cache into two invisible namespaces.
         mock_cache.set.assert_called_once_with(
-            backend.make_key("test_key"),
+            "test_key",
             "test_value",
-            timeout=3600
+            timeout=3600,
+            version=None,
         )
 
     @patch("fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler")
@@ -150,20 +155,17 @@ class TestFragmentedKeysCacheBackend:
 
         backend = FragmentedKeysCacheBackend("", backend_params)
 
-        # Build the expected cache keys so the mock returns matching keys
-        cache_key1 = backend.make_key("key1")
-        cache_key2 = backend.make_key("key2")
-        mock_cache.get_many.return_value = {
-            cache_key1: "value1",
-            cache_key2: "value2",
-        }
+        # The wrapped backend is asked for the caller's own key names and
+        # returns them unchanged — Django's get_many contract — so no key
+        # rewriting happens on either leg.
+        mock_cache.get_many.return_value = {"key1": "value1", "key2": "value2"}
 
         result = backend.get_many(["key1", "key2"])
 
         assert len(result) == 2
         assert result["key1"] == "value1"
         assert result["key2"] == "value2"
-        mock_cache.get_many.assert_called_once()
+        mock_cache.get_many.assert_called_once_with(["key1", "key2"], version=None)
 
     @patch("fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler")
     @patch("django.core.cache.caches")

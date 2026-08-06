@@ -26,7 +26,7 @@ Three usage modes:
     key = ring.get_profile_key_obj("42")
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from fragmented_keys import ConstantTag, FragmentedKeyRing, MemoryHandler
 
@@ -42,6 +42,9 @@ from fragmented_keys_django.cache_utils.key_rings import (
 )
 from fragmented_keys_django.cache_utils.bulk import (
     CacheAwareManager, CacheAwareQuerySet,
+)
+from fragmented_keys_django.cache_utils.epoch import (
+    get_cache_epoch, set_cache_epoch, epoch_tag, with_epoch,
 )
 
 __all__ = [
@@ -71,4 +74,9 @@ __all__ = [
     # Bulk operation support
     "CacheAwareManager",
     "CacheAwareQuerySet",
+    # Global cache epoch
+    "get_cache_epoch",
+    "set_cache_epoch",
+    "epoch_tag",
+    "with_epoch",
 ]

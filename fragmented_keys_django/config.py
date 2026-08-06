@@ -30,6 +30,7 @@ def configure_fragmented_keys(
     prefix: str = "NOZ",
     global_prefix: str | None = None,
     setup_key_ring: bool = True,
+    epoch: float | None = None,
 ) -> None:
     """Configure fragmented_keys global settings.
 
@@ -57,6 +58,12 @@ def configure_fragmented_keys(
     :param setup_key_ring: If ``True`` (default), creates and registers a
         default :class:`FragmentedKeyRing` backed by the configured handler.
         Retrieve it later with ``get_key_ring("default")``.
+    :param epoch: Global cache epoch. Every composite key carries this as a
+        constant dimension, so raising it invalidates the entire cache in one
+        move — use it when a key-derivation or payload-schema change makes the
+        previous generation of entries untrustworthy rather than merely stale.
+        ``None`` leaves the current epoch alone. See
+        :mod:`fragmented_keys_django.cache_utils.epoch`.
 
     :example:
 
@@ -74,9 +81,13 @@ def configure_fragmented_keys(
     """
     from fragmented_keys import Configuration
     from fragmented_keys_django.cache_backends.handlers import DjangoCacheHandler
+    from fragmented_keys_django.cache_utils.epoch import set_cache_epoch
 
     # Support both parameter names for convenience
     actual_prefix = global_prefix or prefix
+
+    if epoch is not None:
+        set_cache_epoch(epoch)
 
     # If the named cache IS a FragmentedKeysCacheBackend, its __init__ already
     # registered a handler and prefix — reuse them to avoid infinite recursion
