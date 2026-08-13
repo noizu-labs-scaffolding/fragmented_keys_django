@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, Callable
 
-from fragmented_keys import StandardTag
+from fragmented_keys import ConstantTag, StandardTag
 
 if TYPE_CHECKING:
     from typing import ParamSpec
@@ -60,34 +60,42 @@ def model_tag(model_name: str, instance_id: str | int) -> StandardTag:
     return StandardTag(model_name, str(instance_id))
 
 
-def list_tag(list_name: str, list_id: str | int) -> StandardTag:
+def list_tag(list_name: str, scope_id: str | int) -> StandardTag:
     """Create a tag for a collection or query result scoped to an owner.
 
     Use this when caching paginated lists, filtered querysets, or any
     collection that should be invalidated when its membership changes.
 
-    Internally, this is just ``StandardTag(list_name, str(list_id))``.
+    The *scope_id* should identify what narrows this list — e.g., the
+    parent entity whose children are listed, or a filter key.
+
+    Internally, this is just ``StandardTag(list_name, str(scope_id))``.
 
     .. note::
 
        You must arrange for the tag to be incremented when the list changes.
-       Options: register the parent model with ``ModelTagManager``, or call
-       ``StandardTag(list_name, str(list_id)).increment()`` manually when
-       items are added/removed.
+       Use ``on_create`` / ``on_delete`` lifecycle hooks on
+       ``ModelTagManager.register_model()`` to bump scope tags automatically.
 
-    :param list_name: Tag name for the list type (e.g. ``"Donations"``).
-    :param list_id: Identifier scoping the list (e.g. ``user_id`` for
-        "this user's donations").
+    :param list_name: Tag name for the entity type (e.g. ``"review"``).
+    :param scope_id: Scope identifier (e.g. ``"org:42"`` for "reviews
+        belonging to org 42", or ``"cat:education"`` for "orgs in the
+        education category").
     :returns: A :class:`StandardTag` instance.
 
     :example:
 
     .. code-block:: python
 
-       donations_tag = list_tag("Donations", str(user_id))
-       key = StandardKey("UserDonations", [donations_tag])
+       # Reviews for org 42
+       review_tag = list_tag("review", "org:42")
+       key = StandardKey("OrgReviews", [review_tag])
+
+       # Organizations in category "education"
+       org_tag = list_tag("organization", "cat:education")
+       key = StandardKey("OrgList", [org_tag])
     """
-    return StandardTag(list_name, str(list_id))
+    return StandardTag(list_name, str(scope_id))
 
 
 def aggregate_tag(metric_name: str, filter_hash: str) -> StandardTag:
@@ -134,6 +142,28 @@ def custom_tag(tag_name: str, instance_value: str | int) -> StandardTag:
        key = StandardKey("WeatherData", [weather_tag])
     """
     return StandardTag(tag_name, str(instance_value))
+
+
+def constant_tag(tag_name: str, instance_value: str | int, version: float = 1.0) -> ConstantTag:
+    """Create a tag with a fixed version that never changes.
+
+    Use this for non-versionable key components — API versions, environment
+    names, feature flags, or any discriminator that should be embedded in
+    the composite key but never triggers invalidation.
+
+    :param tag_name: Tag name.
+    :param instance_value: Instance identifier.
+    :param version: Fixed version number (default: 1.0).
+    :returns: A :class:`ConstantTag` instance.
+
+    :example:
+
+    .. code-block:: python
+
+       env_tag = constant_tag("env", "production")
+       api_tag = constant_tag("api_version", "v2", version=2.0)
+    """
+    return ConstantTag(tag_name, str(instance_value), version=version)
 
 
 def parse_tag_template(tag_template: str) -> tuple[str, str]:

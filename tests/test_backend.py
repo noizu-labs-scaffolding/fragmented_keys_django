@@ -84,10 +84,15 @@ class TestFragmentedKeysCacheBackend:
         backend = FragmentedKeysCacheBackend("", backend_params)
         backend.set("test_key", "test_value", timeout=3600)
 
+        # The key is handed to the wrapped backend verbatim, with Django's
+        # version forwarded, so that backend applies its own key naming exactly
+        # once. Pre-prefixing here as well produced ":1::1:test_key" and split
+        # the cache into two invisible namespaces.
         mock_cache.set.assert_called_once_with(
-            backend.make_key("test_key"),
+            "test_key",
             "test_value",
-            timeout=3600
+            timeout=3600,
+            version=None,
         )
 
     @patch("fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler")
@@ -150,20 +155,17 @@ class TestFragmentedKeysCacheBackend:
 
         backend = FragmentedKeysCacheBackend("", backend_params)
 
-        # Build the expected cache keys so the mock returns matching keys
-        cache_key1 = backend.make_key("key1")
-        cache_key2 = backend.make_key("key2")
-        mock_cache.get_many.return_value = {
-            cache_key1: "value1",
-            cache_key2: "value2",
-        }
+        # The wrapped backend is asked for the caller's own key names and
+        # returns them unchanged — Django's get_many contract — so no key
+        # rewriting happens on either leg.
+        mock_cache.get_many.return_value = {"key1": "value1", "key2": "value2"}
 
         result = backend.get_many(["key1", "key2"])
 
         assert len(result) == 2
         assert result["key1"] == "value1"
         assert result["key2"] == "value2"
-        mock_cache.get_many.assert_called_once()
+        mock_cache.get_many.assert_called_once_with(["key1", "key2"], version=None)
 
     @patch("fragmented_keys_django.cache_backends.handlers.DjangoCacheHandler")
     @patch("django.core.cache.caches")
@@ -470,8 +472,51 @@ class TestTagAwareMethods:
         with pytest.raises(TypeError):
             backend._normalize_tags([123])
 
-        with pytest.raises(TypeError):
-            backend._normalize_tags([("a", "b", "c")])  # 3-tuple
+    def test_3_tuple_constant_tag(self, backend):
+        """3-tuple with 'constant' creates a ConstantTag."""
+        from fragmented_keys import ConstantTag
+        tags = backend._normalize_tags([("env", "prod", "constant")])
+        assert len(tags) == 1
+        assert isinstance(tags[0], ConstantTag)
+
+    def test_3_tuple_invalid_type_raises(self, backend):
+        """3-tuple with invalid type raises TypeError."""
+        with pytest.raises(TypeError, match="must be 'constant'"):
+            backend._normalize_tags([("a", "b", "invalid")])
+
+    def test_dict_tag_standard(self, backend):
+        """Dict with type='standard' creates a StandardTag."""
+        from fragmented_keys import StandardTag
+        tags = backend._normalize_tags([{"tag": "user", "instance": "42"}])
+        assert len(tags) == 1
+        assert isinstance(tags[0], StandardTag)
+
+    def test_dict_tag_constant(self, backend):
+        """Dict with type='constant' creates a ConstantTag."""
+        from fragmented_keys import ConstantTag
+        tags = backend._normalize_tags([
+            {"tag": "api", "instance": "v2", "type": "constant", "version": 2.0}
+        ])
+        assert len(tags) == 1
+        assert isinstance(tags[0], ConstantTag)
+        assert tags[0].get_tag_version() == 2.0
+
+    def test_1_tuple_deprecated(self, backend):
+        """1-tuple works but emits DeprecationWarning."""
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            tags = backend._normalize_tags([("user",)])
+            assert len(tags) == 1
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+
+    def test_base_tag_passthrough(self, backend):
+        """Raw ConstantTag instances pass through unchanged."""
+        from fragmented_keys import ConstantTag
+        raw = ConstantTag("env", "prod", version=1.0)
+        tags = backend._normalize_tags([raw])
+        assert tags[0] is raw
 
     def test_delete_with_tags(self, backend, tags_tuples):
         """delete_with_tags removes the composite entry."""

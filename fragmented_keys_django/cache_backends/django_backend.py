@@ -64,7 +64,11 @@ if TYPE_CHECKING:
 
 from django.core.cache.backends.base import BaseCache
 from django.utils.module_loading import import_string
-from fragmented_keys import FragmentedKeyRing, StandardKey, StandardTag
+import warnings
+
+from fragmented_keys import ConstantTag, FragmentedKeyRing, StandardKey, StandardTag
+from fragmented_keys.tag.base import BaseTag
+from fragmented_keys_django.cache_utils.epoch import set_cache_epoch, with_epoch
 
 
 class FragmentedKeysCacheBackend(BaseCache):
@@ -119,6 +123,10 @@ class FragmentedKeysCacheBackend(BaseCache):
         super().__init__(params)
         self._prefix = params.get("PREFIX", "NOZ")
         self._options = params.get("OPTIONS", {})
+        # Global cache epoch: one constant dimension on every composite key.
+        # Raising it strands every prior entry at once. See cache_utils.epoch.
+        if "EPOCH" in params:
+            set_cache_epoch(params["EPOCH"])
 
         cache_name = params.get("CACHE_NAME")
         location = server or params.get("LOCATION")
@@ -152,6 +160,22 @@ class FragmentedKeysCacheBackend(BaseCache):
         Configuration.set_global_prefix(self._prefix)
 
     # ── Standard BaseCache methods (pass-through) ─────────────────
+    #
+    # These delegate to the wrapped backend with the caller's key *unchanged*,
+    # forwarding Django's ``version`` so the wrapped backend applies its own
+    # key naming exactly once.
+    #
+    # They must not call ``self.make_key()``. Doing so prefixes the key here and
+    # then again inside the wrapped backend, producing ":1::1:foo" instead of
+    # ":1:foo" — a second, invisible key namespace. That mattered well beyond
+    # the pass-through API: ``configure_fragmented_keys()`` installs a
+    # DjangoCacheHandler wrapping *this backend* as the global default, so every
+    # tag built without an explicit handler — ``model_tag()``, ``ModelTagManager``,
+    # ``@tagged_cache``, ``invalidate_scope()``, a bare ``StandardTag()`` — stored
+    # its version doubly-prefixed, while ``set_with_tags`` and friends (which
+    # carry this backend's inner handler) stored theirs singly-prefixed. The two
+    # sets held different versions for the same logical tag and could not
+    # invalidate one another.
 
     def add(self, key: str, value: Any, timeout: int | None = None, version: int | None = None) -> bool:
         """Add a value only if the key doesn't already exist.
@@ -164,8 +188,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         :param version: Django cache version (integer, not tag version).
         :returns: ``True`` if the key was added, ``False`` if it already existed.
         """
-        cache_key = self.make_key(key, version)
-        return self._handler._cache.add(cache_key, value, timeout=timeout)
+        return self._handler._cache.add(key, value, timeout=timeout, version=version)
 
     def get(self, key: str, default: Any = None, version: int | None = None) -> Any:
         """Fetch a value from the cache.
@@ -177,8 +200,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         :param version: Django cache version.
         :returns: Cached value, or *default* if not found.
         """
-        cache_key = self.make_key(key, version)
-        val = self._handler._cache.get(cache_key)
+        val = self._handler._cache.get(key, version=version)
         return val if val is not None else default
 
     def set(self, key: str, value: Any, timeout: int | None = None, version: int | None = None) -> bool:
@@ -192,8 +214,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         :param version: Django cache version.
         :returns: ``True`` on success.
         """
-        cache_key = self.make_key(key, version)
-        self._handler._cache.set(cache_key, value, timeout=timeout)
+        self._handler._cache.set(key, value, timeout=timeout, version=version)
         return True
 
     def touch(self, key: str, timeout: int | None = None, version: int | None = None) -> bool:
@@ -204,9 +225,8 @@ class FragmentedKeysCacheBackend(BaseCache):
         :param version: Django cache version.
         :returns: ``True`` on success, ``False`` if the backend doesn't support ``touch``.
         """
-        cache_key = self.make_key(key, version)
         try:
-            self._handler._cache.touch(cache_key, timeout)
+            self._handler._cache.touch(key, timeout, version=version)
             return True
         except (AttributeError, NotImplementedError):
             # Some cache backends don't support touch (e.g., database cache)
@@ -219,8 +239,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         :param version: Django cache version.
         :returns: ``True`` (always, matching Django convention).
         """
-        cache_key = self.make_key(key, version)
-        self._handler._cache.delete(cache_key)
+        self._handler._cache.delete(key, version=version)
         return True
 
     def get_many(self, keys: list[str], version: int | None = None) -> dict[str, Any]:
@@ -230,12 +249,9 @@ class FragmentedKeysCacheBackend(BaseCache):
 
         :param keys: List of cache keys.
         :param version: Django cache version.
-        :returns: Dict mapping found keys (original names, not make_key'd) to values.
+        :returns: Dict mapping found keys to values, keyed by the names passed in.
         """
-        key_map = {self.make_key(key, version): key for key in keys}
-        results = self._handler._cache.get_many(list(key_map.keys()))
-        # Reverse the key transformation for the result
-        return {key_map[k]: v for k, v in results.items() if k in key_map}
+        return self._handler._cache.get_many(keys, version=version)
 
     def get_or_set(self, key: str, default: Any, timeout: int | None = None, version: int | None = None) -> Any:
         """Fetch a value, or store *default* if the key doesn't exist.
@@ -247,11 +263,10 @@ class FragmentedKeysCacheBackend(BaseCache):
         :param version: Django cache version.
         :returns: The cached or newly-stored value.
         """
-        cache_key = self.make_key(key, version)
-        val = self._handler._cache.get(cache_key)
+        val = self._handler._cache.get(key, version=version)
         if val is not None:
             return val
-        self._handler._cache.set(cache_key, default, timeout=timeout)
+        self._handler._cache.set(key, default, timeout=timeout, version=version)
         return default
 
     def set_many(self, data: dict[str, Any], timeout: int | None = None, version: int | None = None) -> list[str]:
@@ -262,8 +277,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         :param version: Django cache version.
         :returns: Empty list (Django convention for success).
         """
-        cache_data = {self.make_key(k, version): v for k, v in data.items()}
-        self._handler._cache.set_many(cache_data, timeout=timeout)
+        self._handler._cache.set_many(data, timeout=timeout, version=version)
         return []  # Django's set_many always returns empty list for success
 
     def delete_many(self, keys: list[str], version: int | None = None) -> None:
@@ -272,8 +286,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         :param keys: List of cache keys.
         :param version: Django cache version.
         """
-        cache_keys = [self.make_key(key, version) for key in keys]
-        self._handler._cache.delete_many(cache_keys)
+        self._handler._cache.delete_many(keys, version=version)
 
     def has_key(self, key: str, version: int | None = None) -> bool:
         """Check if a key exists in the cache.
@@ -282,8 +295,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         :param version: Django cache version.
         :returns: ``True`` if the key exists.
         """
-        cache_key = self.make_key(key, version)
-        return self._handler._cache.has_key(cache_key)  # noqa: E501
+        return self._handler._cache.has_key(key, version=version)  # noqa: E501
 
     def clear(self) -> None:
         """Clear all keys from the underlying cache.
@@ -307,7 +319,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         """
         if not self.has_key(key, version):
             raise ValueError(f"Key '{key}' not found")
-        return self._handler._cache.incr(self.make_key(key, version), delta)
+        return self._handler._cache.incr(key, delta, version=version)
 
     def decr(self, key: str, delta: int = 1, version: int | None = None) -> int:
         """Atomically decrement a key's integer value.
@@ -320,7 +332,7 @@ class FragmentedKeysCacheBackend(BaseCache):
         """
         if not self.has_key(key, version):
             raise ValueError(f"Key '{key}' not found")
-        return self._handler._cache.decr(self.make_key(key, version), delta)
+        return self._handler._cache.decr(key, delta, version=version)
 
     def close(self, **kwargs: Any) -> None:
         """Close the cache connection if the underlying backend supports it."""
@@ -342,32 +354,79 @@ class FragmentedKeysCacheBackend(BaseCache):
     # ── Tag-aware API ──────────────────────────────────────────────
 
     def _normalize_tags(
-        self, tags: list[tuple[str, str] | StandardTag],
-    ) -> list[StandardTag]:
-        """Convert mixed tag inputs into a uniform list of ``StandardTag`` objects.
+        self, tags: list[tuple | BaseTag | dict],
+    ) -> list[BaseTag]:
+        """Convert mixed tag inputs into a uniform list of tag objects.
 
-        Accepts two input forms:
+        Accepted input forms:
 
-        - ``StandardTag`` instances — passed through unchanged.
-        - ``(name, instance)`` tuples — converted to
-          ``StandardTag(str(name), str(instance), handler=self._handler)``.
+        - ``BaseTag`` subclass instances (``StandardTag``, ``ConstantTag``, or
+          custom) — passed through unchanged.
+        - ``(name, instance)`` 2-tuple — ``StandardTag(name, instance)``.
+        - ``(name,)`` 1-tuple — ``StandardTag(name, "*")``.
+          Emits a ``DeprecationWarning`` suggesting an explicit 2-tuple.
+        - ``(name, instance, "constant")`` 3-tuple — ``ConstantTag(name, instance)``.
+        - ``dict`` with keys ``tag``, ``instance``, and optional ``type``
+          (``"standard"`` or ``"constant"``), ``version`` — full control form.
 
-        :param tags: List of tags in either form, or a mix.
-        :returns: List of ``StandardTag`` objects.
-        :raises TypeError: If an element is neither a ``StandardTag`` nor a 2-tuple.
+        :param tags: List of tags in any supported form.
+        :returns: List of ``BaseTag`` subclass instances.
+        :raises TypeError: If an element doesn't match any accepted form.
         """
-        result: list[StandardTag] = []
+        result: list[BaseTag] = []
         for tag in tags:
-            if isinstance(tag, StandardTag):
+            if isinstance(tag, BaseTag):
                 result.append(tag)
-            elif isinstance(tag, tuple) and len(tag) == 2:
-                name, instance = tag
-                result.append(StandardTag(str(name), str(instance), handler=self._handler))
+            elif isinstance(tag, dict):
+                result.append(self._tag_from_dict(tag))
+            elif isinstance(tag, tuple):
+                result.append(self._tag_from_tuple(tag))
             else:
                 raise TypeError(
-                    f"Tags must be StandardTag instances or (name, instance) tuples, got {type(tag)}"
+                    f"Tags must be BaseTag instances, tuples, or dicts, got {type(tag)}"
                 )
         return result
+
+    def _tag_from_tuple(self, tag: tuple) -> BaseTag:
+        if len(tag) == 1:
+            warnings.warn(
+                f"1-tuple tag ({tag[0]!r},) is deprecated. "
+                f"Use an explicit 2-tuple ('{tag[0]}', '<scope_id>') instead.",
+                DeprecationWarning,
+                stacklevel=4,
+            )
+            return StandardTag(str(tag[0]), "*", handler=self._handler)
+        elif len(tag) == 2:
+            name, instance = tag
+            return StandardTag(str(name), str(instance), handler=self._handler)
+        elif len(tag) == 3:
+            name, instance, tag_type = tag
+            if str(tag_type).lower() == "constant":
+                return ConstantTag(str(name), str(instance), handler=self._handler)
+            raise TypeError(
+                f"3-tuple tag type must be 'constant', got {tag_type!r}"
+            )
+        raise TypeError(
+            f"Tag tuples must be 1-, 2-, or 3-element, got {len(tag)}-element"
+        )
+
+    def _tag_from_dict(self, tag: dict) -> BaseTag:
+        tag_name = str(tag["tag"])
+        instance = str(tag.get("instance", ""))
+        tag_type = str(tag.get("type", "standard")).lower()
+        version = tag.get("version")
+
+        if tag_type == "constant":
+            return ConstantTag(
+                tag_name, instance,
+                version=float(version) if version is not None else 1.0,
+                handler=self._handler,
+            )
+        return StandardTag(
+            tag_name, instance,
+            version=float(version) if version is not None else None,
+            handler=self._handler,
+        )
 
     def _build_tagged_key(
         self,
@@ -387,7 +446,7 @@ class FragmentedKeysCacheBackend(BaseCache):
             the same base name and tags.
         :returns: Hashed composite key string ready for use with the underlying cache.
         """
-        tag_objs = self._normalize_tags(tags)
+        tag_objs = with_epoch(self._normalize_tags(tags), self._handler)
         std_key = StandardKey(key, tag_objs, group_id=group_id)
         return std_key.get_key_str(hash=True)
 

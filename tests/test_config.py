@@ -28,7 +28,7 @@ class TestConfigureFragmentedKeys:
         mock_handler = MagicMock()
         mock_handler_cls.return_value = mock_handler
 
-        configure_fragmented_keys()
+        configure_fragmented_keys(setup_key_ring=False)
 
         mock_handler_cls.assert_called_once_with("default")
         mock_config.set_default_cache_handler.assert_called_once_with(mock_handler)
@@ -43,7 +43,7 @@ class TestConfigureFragmentedKeys:
         mock_caches.__getitem__.return_value = MagicMock()
         mock_handler_cls.return_value = MagicMock()
 
-        configure_fragmented_keys(cache_name="redis_cache", prefix="MYAPP")
+        configure_fragmented_keys(cache_name="redis_cache", prefix="MYAPP", setup_key_ring=False)
 
         mock_handler_cls.assert_called_once_with("redis_cache")
         mock_config.set_global_prefix.assert_called_once_with("MYAPP")
@@ -57,7 +57,7 @@ class TestConfigureFragmentedKeys:
         mock_caches.__getitem__.return_value = MagicMock()
         mock_handler_cls.return_value = MagicMock()
 
-        configure_fragmented_keys(prefix="IGNORED", global_prefix="WINNER")
+        configure_fragmented_keys(prefix="IGNORED", global_prefix="WINNER", setup_key_ring=False)
 
         mock_config.set_global_prefix.assert_called_once_with("WINNER")
 
@@ -66,7 +66,7 @@ class TestConfigureFragmentedKeys:
         """When handler already exists, only updates prefix (no recursion)."""
         mock_config.get_default_cache_handler.return_value = MagicMock()
 
-        configure_fragmented_keys(prefix="GNP")
+        configure_fragmented_keys(prefix="GNP", setup_key_ring=False)
 
         mock_config.set_global_prefix.assert_called_once_with("GNP")
         mock_config.set_default_cache_handler.assert_not_called()
@@ -103,12 +103,14 @@ class TestGetCacheHandler:
 class TestResetConfiguration:
     """Tests for reset_configuration()."""
 
+    @patch("fragmented_keys_django.cache_utils.key_rings.clear_key_rings")
     @patch("fragmented_keys.Configuration")
-    def test_calls_reset(self, mock_config):
-        """Delegates to Configuration.reset()."""
+    def test_calls_reset(self, mock_config, mock_clear_rings):
+        """Delegates to Configuration.reset() and clears key rings."""
         reset_configuration()
 
         mock_config.reset.assert_called_once()
+        mock_clear_rings.assert_called_once()
 
 
 class TestSetCacheHandlerGlobally:
