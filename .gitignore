@@ -19,3 +19,7 @@ __pycache__/
 
 # Sphinx docs build
 docs/_build/
+
+# Work journal — local only, not tracked
+journal/TODAY*
+journal/TOMORROW*
